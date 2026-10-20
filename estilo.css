@@ -26,6 +26,7 @@
 
   --st-solicitado: #5B47A8;
   --st-prevista: #1F6F75;
+  --st-lancado: #3C5A7A;
   --st-aguardando: #9A6512;
   --st-devolvido: #B0402F;
   --st-aprovado: #2462A0;
@@ -201,6 +202,7 @@ input.valor { font-variant-numeric: tabular-nums; text-align: right; }
 .status::before { content: ''; width: 9px; height: 9px; border-radius: 50%; background: currentColor; flex: none; }
 .status.SOLICITADO { color: var(--st-solicitado); }
 .status.PREVISTA { color: var(--st-prevista); }
+.status.LANCADO { color: var(--st-lancado); }
 .status.AGUARDANDO_APROVACAO { color: var(--st-aguardando); }
 .status.DEVOLVIDO { color: var(--st-devolvido); }
 .status.APROVADO { color: var(--st-aprovado); }
@@ -209,8 +211,8 @@ input.valor { font-variant-numeric: tabular-nums; text-align: right; }
 .status.CANCELADO { color: var(--st-cancelado); }
 
 /* Trilho: as quatro etapas da conta. A etapa atual é o único ponto em ouro. */
-.trilho { display: grid; grid-template-columns: repeat(4, 1fr); position: relative; padding-top: 4px; }
-.trilho::before { content: ''; position: absolute; left: 12.5%; right: 12.5%; top: 9px; height: 2px; background: var(--linha); }
+.trilho { display: grid; grid-template-columns: repeat(5, 1fr); position: relative; padding-top: 4px; }
+.trilho::before { content: ''; position: absolute; left: 10%; right: 10%; top: 9px; height: 2px; background: var(--linha); }
 .trilho .marco { position: relative; display: grid; justify-items: center; gap: 4px; font-size: 11px; color: var(--nevoa); text-align: center; }
 .trilho .ponto { width: 12px; height: 12px; border-radius: 50%; background: var(--branco); border: 2px solid var(--linha-forte); z-index: 1; }
 .trilho .feito .ponto { background: var(--marinho); border-color: var(--marinho); }
@@ -392,3 +394,8 @@ table.dre td:first-child { white-space: nowrap; }
   .grafico text { font-size: 15px; }
   .barra-lote { bottom: 76px; }
 }
+
+/* Destaque do comprovante para quem pediu o pagamento */
+.comprovante-destaque { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap;
+  border: 1px solid var(--st-pago); background: #EEF6F1; border-radius: 10px; padding: 12px 14px; margin-bottom: 12px; }
+.comprovante-destaque b { color: var(--st-pago); }

@@ -3,7 +3,7 @@
  * Guarda só os arquivos da tela; respostas do servidor (dados) NUNCA são
  * guardadas no aparelho. Ao publicar uma nova versão, mude VERSAO.
  */
-const VERSAO = 'cap-v2';
+const VERSAO = 'cap-v3';
 const ARQUIVOS = [
   './', 'index.html', 'estilo.css', 'config.js', 'manifest.webmanifest',
   'js/app.js', 'js/api.js', 'js/ui.js', 'js/telas-contas.js', 'js/telas-financeiro.js', 'js/telas-admin.js', 'js/telas-relatorios.js',

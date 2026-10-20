@@ -1,5 +1,5 @@
 /**
- * telas-financeiro.js — Receitas (entradas pelo extrato), contas recorrentes e fornecedores.
+ * telas-financeiro.js — Receitas (entradas pelo extrato), recebido pelo dono, contas recorrentes e fornecedores.
  */
 import { api } from './api.js';
 import { app } from './app.js';
@@ -87,6 +87,96 @@ function formReceita(depois) {
     h('label', { class: 'campo' }, 'Empresa', f.empresa), h('label', { class: 'campo' }, 'Conta bancária', f.conta),
     h('label', { class: 'campo' }, 'Categoria', f.categoria), h('label', { class: 'campo' }, 'Data no extrato', f.data),
     h('label', { class: 'campo' }, 'Valor (R$)', f.valor), h('label', { class: 'campo' }, 'Descrição', f.descricao)),
+  erro, h('div', { class: 'acoes fim', style: { marginTop: '14px' } }, botao));
+}
+
+// ---------------------------------------------------------------------------
+// Recebido pelo dono (venda paga direto ao dono: só registro)
+// ---------------------------------------------------------------------------
+
+const FORMAS_RECEBIMENTO = { DINHEIRO: 'Dinheiro', PIX: 'Pix', CARTAO: 'Cartão', TRANSFERENCIA: 'Transferência', OUTRO: 'Outro' };
+
+export async function telaRecebidosDono({ subtitulo }) {
+  const fin = app.tem('FINANCEIRO');
+  subtitulo('Vendas que o cliente pagou direto ao dono. É só um registro: não entra no caixa, nas receitas nem na DRE.');
+  const filtro = {
+    empresa: h('select', null, opcoes(app.cad.empresas.map((e) => [e.id, e.nome]), '', 'Todas')),
+    de: h('input', { type: 'date' }),
+    ate: h('input', { type: 'date' }),
+    busca: h('input', { type: 'search', placeholder: 'Cliente, o que foi vendido ou quem recebeu' }),
+    cancelados: h('input', { type: 'checkbox' }),
+  };
+  const total = h('p', { class: 'resumo' });
+  const lista = h('div', { class: 'bloco rolagem' });
+  const carregar = async () => {
+    const r = await api('recebidosDono.listar', { empresaId: filtro.empresa.value || undefined, de: filtro.de.value || undefined,
+      ate: filtro.ate.value || undefined, busca: filtro.busca.value.trim() || undefined, incluirCancelados: filtro.cancelados.checked });
+    limpar(total, h('span', null, r.quantidade + (r.quantidade === 1 ? ' registro · ' : ' registros · '), h('b', null, reais(r.totalCentavos))));
+    limpar(lista, !r.itens.length ? h('div', { class: 'vazio' }, 'Nenhum registro com esses filtros.') : h('table', { class: 'tabela' },
+      h('thead', null, h('tr', null, ['Data', 'Empresa', 'Cliente', 'O que foi vendido', 'Recebido por', 'Forma', 'Valor', ''].map((t, i) => h('th', { class: i === 6 ? 'direita' : '' }, t)))),
+      h('tbody', null, r.itens.map((x) => {
+        const cancelado = x.status === 'CANCELADO';
+        return h('tr', { style: cancelado ? { color: 'var(--nevoa)', textDecoration: 'line-through' } : null },
+          h('td', { class: 'num' }, data(x.data)), h('td', null, app.nomeEmpresa(x.empresaId)), h('td', null, x.cliente),
+          h('td', null, x.descricao,
+            x.observacoes ? h('div', { class: 'secundario pequeno' }, x.observacoes) : null,
+            h('div', { class: 'secundario pequeno', style: { textDecoration: 'none' } }, 'Registrado por ' + x.lancadoPor + (cancelado ? ' · Cancelado: ' + x.motivoCancelamento : ''))),
+          h('td', null, x.recebidoPor), h('td', null, FORMAS_RECEBIMENTO[x.formaRecebimento] || x.formaRecebimento),
+          h('td', { class: 'direita num' }, reais(x.valorCentavos)),
+          h('td', null, fin && !cancelado ? h('button', { class: 'discreto', onclick: async (e) => {
+            const motivo = await pedirMotivo('Cancelar registro', 'Cancelar registro', true);
+            if (!motivo) return;
+            await comBotao(e.target, async () => {
+              try { await api('recebidosDono.cancelar', { registroId: x.id, versao: x.versao, motivo }); toast('Registro cancelado.'); carregar(); } catch (err) { toast(err.message, { tipo: 'erro' }); }
+            });
+          } }, 'Cancelar') : null));
+      }))));
+  };
+  let espera;
+  Object.values(filtro).forEach((el) => el.addEventListener(el.type === 'search' ? 'input' : 'change', () => {
+    clearTimeout(espera); espera = setTimeout(carregar, el.type === 'search' ? 350 : 0);
+  }));
+  await carregar();
+  return [fin ? formRecebidoDono(carregar) : null,
+    h('div', { class: 'bloco filtros' },
+      h('label', { class: 'campo busca' }, 'Buscar', filtro.busca),
+      h('label', { class: 'campo' }, 'Empresa', filtro.empresa), h('label', { class: 'campo' }, 'De', filtro.de),
+      h('label', { class: 'campo' }, 'Até', filtro.ate), h('label', { class: 'check' }, filtro.cancelados, 'Mostrar cancelados')),
+    total, lista];
+}
+
+function formRecebidoDono(depois) {
+  const empresas = app.cad.empresas.filter((e) => e.ativo);
+  const f = {
+    empresa: h('select', null, opcoes(empresas.map((e) => [e.id, e.nome]), empresas.length === 1 ? empresas[0].id : '', empresas.length === 1 ? undefined : 'Escolha')),
+    data: h('input', { type: 'date', value: hojeIso(), max: hojeIso() }),
+    cliente: h('input', { maxlength: 120 }),
+    descricao: h('input', { maxlength: 300, placeholder: 'Ex.: 20 caixas de tempero' }),
+    valor: campoValor(),
+    forma: h('select', null, opcoes(Object.entries(FORMAS_RECEBIMENTO), 'PIX')),
+    recebidoPor: h('input', { maxlength: 80, placeholder: 'Ex.: Roberto (dono)' }),
+    observacoes: h('input', { maxlength: 500 }),
+  };
+  const erro = h('p', { class: 'mensagem erro', hidden: true });
+  const botao = h('button', { class: 'primario', type: 'submit' }, 'Registrar');
+  return h('form', { class: 'bloco', onsubmit: (e) => {
+    e.preventDefault(); erro.hidden = true;
+    return comBotao(botao, async () => {
+      try {
+        await api('recebidosDono.lancar', { empresaId: f.empresa.value, data: f.data.value, cliente: f.cliente.value.trim(),
+          descricao: f.descricao.value.trim(), valorCentavos: f.valor.centavos, formaRecebimento: f.forma.value,
+          recebidoPor: f.recebidoPor.value.trim(), observacoes: f.observacoes.value.trim() || undefined });
+        toast('Registrado.');
+        ['cliente', 'descricao', 'valor', 'observacoes'].forEach((k) => { f[k].value = ''; });
+        depois();
+      } catch (err) { erro.textContent = err.message; erro.hidden = false; }
+    });
+  } }, h('h2', null, 'Nova venda recebida pelo dono'),
+  h('div', { class: 'grade-campos' },
+    h('label', { class: 'campo' }, 'Empresa', f.empresa), h('label', { class: 'campo' }, 'Data', f.data),
+    h('label', { class: 'campo' }, 'Cliente', f.cliente), h('label', { class: 'campo' }, 'O que foi vendido', f.descricao),
+    h('label', { class: 'campo' }, 'Valor (R$)', f.valor), h('label', { class: 'campo' }, 'Forma', f.forma),
+    h('label', { class: 'campo' }, 'Quem recebeu', f.recebidoPor), h('label', { class: 'campo' }, 'Observações', h('span', { class: 'dica' }, 'Opcional'), f.observacoes)),
   erro, h('div', { class: 'acoes fim', style: { marginTop: '14px' } }, botao));
 }
 

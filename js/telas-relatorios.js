@@ -227,7 +227,7 @@ function tabelaDre(d, detalhe) {
       h('p', { class: 'secundario pequeno', style: { marginTop: '10px' } },
         d.contasPagas + ' contas pagas e ' + d.receitas + ' entradas no período. ' + d.observacao)),
     d.foraDaDre.length ? h('div', { class: 'bloco rolagem' }, h('h3', null, 'Fora da DRE'),
-      h('p', { class: 'secundario pequeno' }, 'Investimentos (compra de máquinas, reformas) saem do caixa, mas não são despesa do mês.'),
+      h('p', { class: 'secundario pequeno' }, 'Investimentos, empréstimos, aportes e retiradas dos sócios mexem no caixa, mas não são receita nem despesa do mês.'),
       h('table', { class: 'tabela dre', style: { marginTop: '8px' } }, h('tbody', null, d.foraDaDre.map((l) => h('tr', null,
         h('td', null, l.rotulo), l.valores.map(valor), multi ? valor(l.total) : null))))) : null,
   ];

@@ -16,7 +16,7 @@ const raiz = document.getElementById('app');
 
 /** Contexto compartilhado com as telas. */
 export const app = {
-  cad: { empresas: [], categorias: [], contasBancarias: [] },
+  cad: { empresas: [], categorias: [], contasBancarias: [], grupos: [] },
   perfis: {},
   tem(...ps) { return ps.some((p) => Object.prototype.hasOwnProperty.call(this.perfis, p)); },
   empresa(id) { return this.cad.empresas.find((e) => e.id === id); },
@@ -31,14 +31,16 @@ export const app = {
 
 const ROTAS = [
   { id: 'para-fazer', titulo: 'Para fazer', perfis: ['FINANCEIRO'], icone: 'caixa', contador: ['SOLICITADO', 'PREVISTA', 'DEVOLVIDO'], tela: contas.telaParaFazer },
+  { id: 'enviar-banco', titulo: 'Subir no banco', curto: 'Banco', perfis: ['FINANCEIRO'], icone: 'carteira', contador: ['LANCADO'], tela: contas.telaEnviarBanco },
   { id: 'para-aprovar', titulo: 'Para aprovar', perfis: ['APROVADOR'], icone: 'check', contador: ['AGUARDANDO_APROVACAO'], tela: contas.telaParaAprovar },
-  { id: 'a-pagar', titulo: 'Confirmar pagamento', curto: 'A pagar', perfis: ['FINANCEIRO'], icone: 'carteira', contador: ['APROVADO'], tela: contas.telaAPagar },
+  { id: 'a-pagar', titulo: 'Confirmar pagamento', curto: 'A pagar', perfis: ['FINANCEIRO'], icone: 'check', contador: ['APROVADO'], tela: contas.telaAPagar },
   { id: 'nova-solicitacao', titulo: 'Nova solicitação', curto: 'Solicitar', perfis: ['GERENTE'], icone: 'mais', tela: contas.telaNovaSolicitacao },
   { id: 'minhas', titulo: 'Minhas solicitações', curto: 'Minhas', perfis: ['GERENTE'], icone: 'lista', tela: contas.telaMinhas },
   { id: 'lancar', titulo: 'Lançar conta', curto: 'Lançar', perfis: ['FINANCEIRO'], icone: 'mais', tela: contas.telaLancar },
   { id: 'painel', titulo: 'Painel', perfis: ['FINANCEIRO', 'APROVADOR', 'GESTOR'], icone: 'grafico', tela: rel.telaPainel },
-  { id: 'contas', titulo: 'Todas as contas', curto: 'Contas', perfis: ['FINANCEIRO', 'APROVADOR', 'GESTOR'], icone: 'lista', tela: contas.telaTodas },
+  { id: 'contas', titulo: 'Contas a pagar', curto: 'Contas', perfis: ['FINANCEIRO', 'APROVADOR', 'GESTOR'], icone: 'lista', tela: contas.telaTodas },
   { id: 'dre', titulo: 'DRE gerencial', curto: 'DRE', perfis: ['FINANCEIRO', 'APROVADOR', 'GESTOR'], icone: 'tabela', tela: rel.telaDre },
+  { id: 'recebido-dono', titulo: 'Recebido pelo dono', curto: 'Dono', perfis: ['FINANCEIRO', 'APROVADOR', 'GESTOR'], icone: 'pessoas', tela: fin.telaRecebidosDono },
   { id: 'receitas', titulo: 'Receitas', perfis: ['FINANCEIRO', 'APROVADOR', 'GESTOR'], icone: 'entrada', tela: fin.telaReceitas },
   { id: 'recorrentes', titulo: 'Contas recorrentes', curto: 'Recorrentes', perfis: ['FINANCEIRO', 'APROVADOR', 'GESTOR'], icone: 'repetir', tela: fin.telaRecorrentes },
   { id: 'fornecedores', titulo: 'Fornecedores', perfis: ['FINANCEIRO'], icone: 'pessoas', tela: fin.telaFornecedores },
@@ -218,6 +220,14 @@ async function rotear() {
 }
 app.recarregar = rotear;
 
+/** Listas que se atualizam sozinhas quando chega um aviso (sem perder nada que a pessoa esteja digitando). */
+const ROTAS_AUTO = ['para-fazer', 'enviar-banco', 'para-aprovar', 'a-pagar', 'minhas'];
+function atualizarListaAberta() {
+  const id = (location.hash.replace(/^#\/?/, '') || '').split('?')[0] || (rotasPermitidas()[0] || {}).id;
+  if (!ROTAS_AUTO.includes(id) || document.querySelector('.painel, .dialogo, .barra-lote:not([hidden])')) return;
+  rotear();
+}
+
 async function atualizarContadores() {
   const rotas = rotasPermitidas().filter((r) => r.contador);
   if (!rotas.length) return;
@@ -285,6 +295,7 @@ async function verificarAvisos() {
     } catch (e) { /* notificação do sistema indisponível */ }
   }
   atualizarContadores();
+  atualizarListaAberta();
 }
 
 document.addEventListener('visibilitychange', () => { if (!document.hidden) { pararPiscar(); if (sessao.token) verificarAvisos(); } });
@@ -292,7 +303,9 @@ document.addEventListener('visibilitychange', () => { if (!document.hidden) { pa
 async function abrirAviso(n) {
   try { await api('notificacoes.marcarLidas', { ids: [n.id] }); } catch (e) { /* segue */ }
   verificarAvisos();
-  if (n.contaId) app.abrirConta(n.contaId);
+  if (n.contaId) { app.abrirConta(n.contaId); return; }
+  const rota = { APROVADA_LOTE: 'a-pagar', AGUARDANDO_APROVACAO_LOTE: 'para-aprovar' }[n.tipo];
+  if (rota) app.navegar(rota);
 }
 
 async function abrirListaAvisos(ancora) {

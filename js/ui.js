@@ -93,15 +93,15 @@ export function hojeIso() {
 }
 
 export const ROTULO_STATUS = {
-  SOLICITADO: 'Solicitado', PREVISTA: 'Prevista', AGUARDANDO_APROVACAO: 'Aguardando aprovação', DEVOLVIDO: 'Devolvido',
-  APROVADO: 'Aprovado / agendado', PAGO: 'Pago', RECUSADO: 'Recusado', CANCELADO: 'Cancelado',
+  SOLICITADO: 'Solicitado', PREVISTA: 'Prevista', LANCADO: 'Lançada (subir no banco)', AGUARDANDO_APROVACAO: 'No banco, aguardando aprovação',
+  DEVOLVIDO: 'Devolvido (tirar do banco)', APROVADO: 'Aprovado / agendado', PAGO: 'Pago', RECUSADO: 'Recusado', CANCELADO: 'Cancelado',
 };
 export const FORMAS = { BOLETO: 'Boleto', PIX: 'Pix', TED: 'TED', DEBITO_AUTOMATICO: 'Débito automático', CARTAO: 'Cartão', DINHEIRO: 'Dinheiro', OUTRO: 'Outro' };
 
-/** Trilho das quatro etapas; o ponto em ouro é onde a conta está. */
+/** Trilho das cinco etapas; o ponto em ouro é onde a conta está. */
 export function trilho(status, grande) {
-  const etapas = ['Solicitada', 'Em aprovação', 'Aprovada', 'Paga'];
-  const indice = { SOLICITADO: 0, PREVISTA: 0, AGUARDANDO_APROVACAO: 1, DEVOLVIDO: 1, APROVADO: 2, PAGO: 3 }[status];
+  const etapas = ['Solicitada', 'Lançada', 'No banco', 'Aprovada', 'Paga'];
+  const indice = { SOLICITADO: 0, PREVISTA: 0, LANCADO: 1, DEVOLVIDO: 1, AGUARDANDO_APROVACAO: 2, APROVADO: 3, PAGO: 4 }[status];
   const encerrado = indice === undefined;
   return h('div', { class: 'trilho' + (grande ? ' grande' : '') + (encerrado ? ' encerrado' : ''), 'aria-hidden': 'true' },
     etapas.map((nome, i) => h('div', { class: 'marco' + (!encerrado && i < indice ? ' feito' : '') + (!encerrado && i === indice ? ' atual' : '') },

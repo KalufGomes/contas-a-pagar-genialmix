@@ -202,14 +202,15 @@ function formContaBancaria(c, empresas, depois) {
 // Plano de contas
 // ---------------------------------------------------------------------------
 
-const GRUPOS = { RECEITA: 'Receitas', DEDUCAO: 'Deduções', CUSTO: 'Custos', PESSOAL: 'Despesas com pessoal', ADMIN: 'Despesas administrativas', COMERCIAL: 'Despesas comerciais', FINANCEIRA: 'Despesas financeiras', IMPOSTOS: 'Impostos e taxas', INVESTIMENTO: 'Investimentos (fora da DRE)' };
+/** Grupos (1º nível) vêm do servidor, na ordem da DRE. */
+const grupos = () => (app.cad.grupos || []).map((g) => [g.chave, g.nome]);
 
 export async function telaCategorias({ subtitulo }) {
   subtitulo('Categorias usadas nas contas, nas receitas e na DRE. Categorias em uso não são apagadas, só desativadas.');
   const r = await api('cadastros.listar', { incluirInativos: true });
   const depois = async () => { await app.recarregarCadastros(); app.recarregar(); };
   return [h('div', { class: 'acoes' }, h('button', { class: 'primario', onclick: () => formCategoria(null, depois) }, 'Nova categoria')),
-    Object.entries(GRUPOS).map(([g, nome]) => {
+    grupos().map(([g, nome]) => {
       const itens = r.categorias.filter((c) => c.grupo === g);
       if (!itens.length) return null;
       return h('section', { class: 'bloco' }, h('h2', null, nome), h('table', { class: 'tabela', style: { marginTop: '8px' } }, h('tbody', null,
@@ -222,7 +223,7 @@ function formCategoria(c, depois) {
   return dialogo((fechar) => {
     const codigo = h('input', { value: c ? c.codigo : '', maxlength: 12, placeholder: 'Ex.: 5.5' });
     const nome = h('input', { value: c ? c.nome : '', maxlength: 80 });
-    const grupo = h('select', { disabled: !!c }, opcoes(Object.entries(GRUPOS), c ? c.grupo : '', 'Escolha'));
+    const grupo = h('select', { disabled: !!c }, opcoes(grupos(), c ? c.grupo : '', 'Escolha'));
     const at = campoAtivo(c);
     const erro = h('p', { class: 'mensagem erro', hidden: true });
     const botao = h('button', { class: 'primario' }, 'Salvar');
