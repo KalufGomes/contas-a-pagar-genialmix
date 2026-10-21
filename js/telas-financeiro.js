@@ -98,7 +98,7 @@ const FORMAS_RECEBIMENTO = { DINHEIRO: 'Dinheiro', PIX: 'Pix', CARTAO: 'Cartão'
 
 export async function telaRecebidosDono({ subtitulo }) {
   const fin = app.tem('FINANCEIRO');
-  subtitulo('Vendas que o cliente pagou direto ao dono. É só um registro: não entra no caixa, nas receitas nem na DRE.');
+  subtitulo('Vendas que o cliente pagou direto ao dono, fora da conta da empresa. É só um registro: não entra no caixa, nas receitas nem na DRE.');
   const filtro = {
     empresa: h('select', null, opcoes(app.cad.empresas.map((e) => [e.id, e.nome]), '', 'Todas')),
     de: h('input', { type: 'date' }),
@@ -171,7 +171,7 @@ function formRecebidoDono(depois) {
         depois();
       } catch (err) { erro.textContent = err.message; erro.hidden = false; }
     });
-  } }, h('h2', null, 'Nova venda recebida pelo dono'),
+  } }, h('h2', null, 'Nova venda fora do caixa'),
   h('div', { class: 'grade-campos' },
     h('label', { class: 'campo' }, 'Empresa', f.empresa), h('label', { class: 'campo' }, 'Data', f.data),
     h('label', { class: 'campo' }, 'Cliente', f.cliente), h('label', { class: 'campo' }, 'O que foi vendido', f.descricao),
@@ -193,7 +193,7 @@ export async function telaRecorrentes({ subtitulo }) {
   const carregar = async () => {
     const lista = await api('recorrencias.listar', { incluirEncerradas: encerradas.checked });
     subtitulo('Cada conta é criada sozinha, como "Prevista", alguns dias antes do vencimento.');
-    limpar(tabela, !lista.length ? h('div', { class: 'vazio' }, 'Nenhuma conta recorrente.', fin ? h('p', { class: 'pequeno' }, 'Para criar, use "Lançar conta" e escolha "Repete todo mês/semana".') : null)
+    limpar(tabela, !lista.length ? h('div', { class: 'vazio' }, 'Nenhuma conta recorrente.', fin ? h('p', { class: 'pequeno' }, 'Para criar, use "+ Nova conta" em Contas a pagar e escolha "Repete todo mês/semana".') : null)
       : h('table', { class: 'tabela' },
         h('thead', null, h('tr', null, ['Fornecedor', 'Empresa', 'Repete', 'Valor', 'Próximo vencimento', ''].map((t, i) => h('th', { class: i === 3 ? 'direita' : '' }, t)))),
         h('tbody', null, lista.map((r) => h('tr', { style: r.ativo ? null : { color: 'var(--nevoa)' } },
@@ -214,7 +214,8 @@ export async function telaRecorrentes({ subtitulo }) {
   };
   encerradas.addEventListener('change', carregar);
   await carregar();
-  return [h('div', { class: 'acoes' }, fin ? h('button', { class: 'primario', onclick: () => app.navegar('lancar') }, 'Nova conta recorrente') : null,
+  return [h('div', { class: 'acoes' }, h('button', { class: 'discreto', onclick: () => app.navegar('contas') }, '← Voltar para Contas a pagar'),
+    fin ? h('button', { class: 'primario', onclick: () => app.navegar('lancar') }, 'Nova conta recorrente') : null,
     h('label', { class: 'check' }, encerradas, 'Mostrar encerradas')), tabela];
 }
 

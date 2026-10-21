@@ -12,6 +12,9 @@ import * as fin from './telas-financeiro.js';
 import * as adm from './telas-admin.js';
 import * as rel from './telas-relatorios.js';
 
+/** Mostrada no rodapé: confirma que o aparelho está com as telas novas. */
+const VERSAO_TELA = '0.7.0';
+
 const raiz = document.getElementById('app');
 
 /** Contexto compartilhado com as telas. */
@@ -29,20 +32,24 @@ export const app = {
   atualizarContadores: () => atualizarContadores(),
 };
 
+/**
+ * Rotas. "oculta": abre por botão dentro de outra tela, sem item no menu.
+ * "contador": status somados no número ao lado do item (pode variar por perfil).
+ */
 const ROTAS = [
   { id: 'para-fazer', titulo: 'Para fazer', perfis: ['FINANCEIRO'], icone: 'caixa', contador: ['SOLICITADO', 'PREVISTA', 'DEVOLVIDO'], tela: contas.telaParaFazer },
-  { id: 'enviar-banco', titulo: 'Subir no banco', curto: 'Banco', perfis: ['FINANCEIRO'], icone: 'carteira', contador: ['LANCADO'], tela: contas.telaEnviarBanco },
   { id: 'para-aprovar', titulo: 'Para aprovar', perfis: ['APROVADOR'], icone: 'check', contador: ['AGUARDANDO_APROVACAO'], tela: contas.telaParaAprovar },
-  { id: 'a-pagar', titulo: 'Confirmar pagamento', curto: 'A pagar', perfis: ['FINANCEIRO'], icone: 'check', contador: ['APROVADO'], tela: contas.telaAPagar },
+  { id: 'contas', titulo: 'Contas a pagar', curto: 'Contas', perfis: ['FINANCEIRO', 'APROVADOR', 'GESTOR'], icone: 'lista',
+    contador: () => (app.tem('FINANCEIRO') ? ['LANCADO'] : null), tela: contas.telaTodas },
+  { id: 'a-pagar', titulo: 'Confirmar pagamento', curto: 'Pagamentos', perfis: ['FINANCEIRO'], icone: 'carteira', contador: ['AGUARDANDO_APROVACAO', 'APROVADO'], tela: contas.telaAPagar },
   { id: 'nova-solicitacao', titulo: 'Nova solicitação', curto: 'Solicitar', perfis: ['GERENTE'], icone: 'mais', tela: contas.telaNovaSolicitacao },
   { id: 'minhas', titulo: 'Minhas solicitações', curto: 'Minhas', perfis: ['GERENTE'], icone: 'lista', tela: contas.telaMinhas },
-  { id: 'lancar', titulo: 'Lançar conta', curto: 'Lançar', perfis: ['FINANCEIRO'], icone: 'mais', tela: contas.telaLancar },
+  { id: 'lancar', titulo: 'Nova conta', perfis: ['FINANCEIRO'], oculta: true, pai: 'contas', tela: contas.telaLancar },
   { id: 'painel', titulo: 'Painel', perfis: ['FINANCEIRO', 'APROVADOR', 'GESTOR'], icone: 'grafico', tela: rel.telaPainel },
-  { id: 'contas', titulo: 'Contas a pagar', curto: 'Contas', perfis: ['FINANCEIRO', 'APROVADOR', 'GESTOR'], icone: 'lista', tela: contas.telaTodas },
   { id: 'dre', titulo: 'DRE gerencial', curto: 'DRE', perfis: ['FINANCEIRO', 'APROVADOR', 'GESTOR'], icone: 'tabela', tela: rel.telaDre },
-  { id: 'recebido-dono', titulo: 'Recebido pelo dono', curto: 'Dono', perfis: ['FINANCEIRO', 'APROVADOR', 'GESTOR'], icone: 'pessoas', tela: fin.telaRecebidosDono },
   { id: 'receitas', titulo: 'Receitas', perfis: ['FINANCEIRO', 'APROVADOR', 'GESTOR'], icone: 'entrada', tela: fin.telaReceitas },
-  { id: 'recorrentes', titulo: 'Contas recorrentes', curto: 'Recorrentes', perfis: ['FINANCEIRO', 'APROVADOR', 'GESTOR'], icone: 'repetir', tela: fin.telaRecorrentes },
+  { id: 'recebido-dono', titulo: 'Vendas fora do caixa', curto: 'Fora do caixa', perfis: ['FINANCEIRO', 'APROVADOR', 'GESTOR'], icone: 'pessoas', tela: fin.telaRecebidosDono },
+  { id: 'recorrentes', titulo: 'Contas recorrentes', perfis: ['FINANCEIRO', 'APROVADOR', 'GESTOR'], oculta: true, pai: 'contas', tela: fin.telaRecorrentes },
   { id: 'fornecedores', titulo: 'Fornecedores', perfis: ['FINANCEIRO'], icone: 'pessoas', tela: fin.telaFornecedores },
   { id: 'usuarios', titulo: 'Usuários e acessos', curto: 'Usuários', grupo: 'Administração', perfis: ['ADMIN'], icone: 'pessoas', tela: adm.telaUsuarios },
   { id: 'empresas', titulo: 'Empresas e contas bancárias', curto: 'Empresas', grupo: 'Administração', perfis: ['ADMIN'], icone: 'caixa', tela: adm.telaEmpresas },
@@ -52,6 +59,10 @@ const ROTAS = [
 ];
 
 const rotasPermitidas = () => ROTAS.filter((r) => app.tem(...r.perfis));
+/** Quem só acompanha (gestor) começa pelo painel; os demais, pela primeira tarefa do menu. */
+const rotaInicial = (menu) => (app.tem('GESTOR') && !app.tem('FINANCEIRO', 'APROVADOR', 'GERENTE') && menu.find((r) => r.id === 'painel')) || menu[0];
+const rotasDoMenu = () => rotasPermitidas().filter((r) => !r.oculta);
+const statusDoContador = (r) => (typeof r.contador === 'function' ? r.contador() : r.contador);
 
 // ---------------------------------------------------------------------------
 // Login e troca de senha
@@ -148,12 +159,12 @@ function botaoSino() {
 }
 
 function montarEstrutura() {
-  const rotas = rotasPermitidas();
+  const rotas = rotasDoMenu();
   const menu = h('nav', { class: 'menu', 'aria-label': 'Menu principal' });
   let grupo = null;
   rotas.forEach((r) => {
     if (r.grupo && r.grupo !== grupo) { grupo = r.grupo; menu.append(h('div', { class: 'grupo' }, grupo)); }
-    r.linkMenu = h('a', { href: '#/' + r.id }, h('span', null, r.titulo), r.contador ? h('span', { class: 'contador', hidden: true }) : null);
+    r.linkMenu = h('a', { href: '#/' + r.id }, h('span', null, r.titulo), statusDoContador(r) ? h('span', { class: 'contador', hidden: true }) : null);
     menu.append(r.linkMenu);
   });
   const perfisTexto = Object.keys(app.perfis).map((p) => ({ GERENTE: 'Gerente', FINANCEIRO: 'Financeiro', APROVADOR: 'Aprovação', GESTOR: 'Gestão', ADMIN: 'Administração' }[p])).join(', ');
@@ -166,7 +177,7 @@ function montarEstrutura() {
   const movel = rotas.slice(0, rotas.length > 5 ? 4 : 5);
   const abas = h('nav', { class: 'abas-movel', 'aria-label': 'Atalhos' },
     movel.map((r) => {
-      r.linkAba = h('a', { href: '#/' + r.id }, icone(r.icone), h('span', null, r.curto || r.titulo), r.contador ? h('span', { class: 'contador', hidden: true }) : null);
+      r.linkAba = h('a', { href: '#/' + r.id }, icone(r.icone), h('span', null, r.curto || r.titulo), statusDoContador(r) ? h('span', { class: 'contador', hidden: true }) : null);
       return r.linkAba;
     }),
     rotas.length > 5 ? (els.abaMais = h('a', { href: '#/mais' }, icone('lista'), h('span', null, 'Mais'))) : null);
@@ -182,13 +193,13 @@ function montarEstrutura() {
       h('header', { class: 'barra-movel' }, placaMarca(), els.sinoMovel),
       h('div', { class: 'topo' }, h('div', { class: 'titulo' }, els.titulo, els.subtitulo), els.sinoTopo),
       h('main', { id: 'conteudo', tabindex: '-1' }, els.conteudo),
-      h('footer', { class: 'creditos' }, 'Desenvolvido por Kaluf & Gomes Soluções Empresariais')),
+      h('footer', { class: 'creditos' }, 'Desenvolvido por Kaluf & Gomes Soluções Empresariais · versão ' + VERSAO_TELA)),
     abas));
 }
 
 function telaMais() {
   return h('div', { class: 'bloco' }, h('nav', { class: 'menu', style: { gap: '4px' } },
-    rotasPermitidas().map((r) => h('a', { href: '#/' + r.id, style: { color: 'var(--tinta)' } }, r.titulo)),
+    rotasDoMenu().map((r) => h('a', { href: '#/' + r.id, style: { color: 'var(--tinta)' } }, r.titulo)),
     h('a', { href: '#', style: { color: 'var(--st-devolvido)' }, onclick: (e) => { e.preventDefault(); sair(); } }, 'Sair')));
 }
 
@@ -196,13 +207,15 @@ async function rotear() {
   if (!sessao.token || !els.conteudo) return;
   const id = (location.hash.replace(/^#\/?/, '') || '').split('?')[0];
   const rotas = rotasPermitidas();
-  const rota = id === 'mais' ? { id: 'mais', titulo: 'Mais opções', tela: telaMais } : rotas.find((r) => r.id === id) || rotas[0];
+  const menu = rotasDoMenu();
+  const rota = id === 'mais' ? { id: 'mais', titulo: 'Mais opções', tela: telaMais } : rotas.find((r) => r.id === id) || rotaInicial(menu);
   if (!rota) { limpar(els.conteudo, h('div', { class: 'vazio' }, 'Seu usuário ainda não tem nenhum perfil de acesso. Fale com o administrador.')); return; }
+  const marcada = rota.pai ? rotas.find((r) => r.id === rota.pai) || rota : rota;
   rotas.forEach((r) => {
-    if (r.linkMenu) r.linkMenu.classList.toggle('ativo', r === rota);
-    if (r.linkAba) r.linkAba.classList.toggle('ativo', r === rota);
+    if (r.linkMenu) r.linkMenu.classList.toggle('ativo', r === marcada);
+    if (r.linkAba) r.linkAba.classList.toggle('ativo', r === marcada);
   });
-  if (els.abaMais) els.abaMais.classList.toggle('ativo', rota.id === 'mais' || !rota.linkAba);
+  if (els.abaMais) els.abaMais.classList.toggle('ativo', rota.id === 'mais' || !marcada.linkAba);
   els.titulo.textContent = rota.titulo;
   els.subtitulo.hidden = true;
   document.title = rota.titulo + ' · ' + CONFIG.NOME_APP;
@@ -221,20 +234,20 @@ async function rotear() {
 app.recarregar = rotear;
 
 /** Listas que se atualizam sozinhas quando chega um aviso (sem perder nada que a pessoa esteja digitando). */
-const ROTAS_AUTO = ['para-fazer', 'enviar-banco', 'para-aprovar', 'a-pagar', 'minhas'];
+const ROTAS_AUTO = ['para-fazer', 'para-aprovar', 'a-pagar', 'minhas'];
 function atualizarListaAberta() {
-  const id = (location.hash.replace(/^#\/?/, '') || '').split('?')[0] || (rotasPermitidas()[0] || {}).id;
+  const id = (location.hash.replace(/^#\/?/, '') || '').split('?')[0] || (rotaInicial(rotasDoMenu()) || {}).id;
   if (!ROTAS_AUTO.includes(id) || document.querySelector('.painel, .dialogo, .barra-lote:not([hidden])')) return;
   rotear();
 }
 
 async function atualizarContadores() {
-  const rotas = rotasPermitidas().filter((r) => r.contador);
+  const rotas = rotasDoMenu().filter((r) => statusDoContador(r));
   if (!rotas.length) return;
   try {
     const r = await api('contas.listar', { porPagina: 1 });
     rotas.forEach((rota) => {
-      const n = rota.contador.reduce((s, st) => s + ((r.resumoPorStatus[st] || {}).quantidade || 0), 0);
+      const n = statusDoContador(rota).reduce((s, st) => s + ((r.resumoPorStatus[st] || {}).quantidade || 0), 0);
       [rota.linkMenu, rota.linkAba].forEach((l) => {
         const c = l && l.querySelector('.contador');
         if (c) { c.textContent = n; c.hidden = n === 0; }

@@ -52,13 +52,22 @@ export async function telaParaFazer({ subtitulo }) {
   const r = await api('contas.listar', { status: ['SOLICITADO', 'PREVISTA', 'DEVOLVIDO'], porPagina: 200 });
   subtitulo(r.total ? r.total + (r.total === 1 ? ' conta precisa' : ' contas precisam') + ' de você: lance as solicitações e previstas, corrija as devolvidas.' : '');
   return listaContas(r.itens, [h('p', null, 'Nada pendente. Novas solicitações dos gerentes aparecem aqui.'),
-    h('button', { class: 'primario', onclick: () => app.navegar('lancar') }, 'Lançar conta')]);
+    h('button', { class: 'primario', onclick: () => app.navegar('lancar') }, 'Nova conta')]);
 }
 
 export async function telaAPagar({ subtitulo }) {
-  const r = await api('contas.listar', { status: ['APROVADO'], porPagina: 200 });
-  subtitulo(r.total ? 'Aprovadas e agendadas no banco. Confirme cada uma quando a compensação aparecer no extrato.' : '');
-  return listaContas(r.itens, 'Nenhuma conta aprovada esperando confirmação de pagamento.');
+  const r = await api('contas.listar', { status: ['AGUARDANDO_APROVACAO', 'APROVADO'], porPagina: 200 });
+  subtitulo(r.total ? 'Contas que já subiram no banco, pela data do pagamento. Confirme cada uma quando o valor sair no extrato.' : '');
+  if (!r.itens.length) return h('div', { class: 'bloco vazio' }, 'Nenhuma conta no banco esperando confirmação de pagamento.');
+  const aprovadas = r.itens.filter((c) => c.status === 'APROVADO');
+  const aguardando = r.itens.filter((c) => c.status === 'AGUARDANDO_APROVACAO');
+  const secao = (titulo, dica, itens) => (itens.length ? h('section', { class: 'secao-lista' },
+    h('h2', null, titulo + ' ', h('span', { class: 'secundario' }, '(' + itens.length + ' · ' + reais(somar(itens)) + ')')),
+    h('p', { class: 'secundario pequeno' }, dica), listaContas(itens, '')) : null);
+  return [
+    secao('Aprovadas pela dona', 'Dê baixa quando cair no extrato.', aprovadas),
+    secao('Aguardando a dona aprovar', 'Se ela já aprovou no banco e esqueceu no sistema, dá para dar baixa com justificativa; ela recebe um aviso.', aguardando),
+  ];
 }
 
 /**
@@ -117,20 +126,6 @@ export async function telaParaAprovar({ subtitulo }) {
   });
 }
 
-export async function telaEnviarBanco({ subtitulo }) {
-  const r = await api('contas.listar', { status: ['LANCADO'], porPagina: 200 });
-  subtitulo(r.total ? 'Contas lançadas que ainda não subiram no banco. Depois de agendar no banco, selecione e marque: elas vão para a aprovação.' : '');
-  if (!r.itens.length) {
-    return h('div', { class: 'bloco vazio' }, h('p', null, 'Nenhuma conta esperando para subir no banco.'),
-      h('button', { class: 'primario', onclick: () => app.navegar('lancar') }, 'Lançar conta'));
-  }
-  return listaComLote(r.itens, {
-    rotuloAcao: (n) => 'Já subi no banco: enviar ' + (n === 1 ? 'a selecionada' : 'as ' + n) + ' para aprovação',
-    acaoApi: 'contas.enviarBancoLote',
-    sucesso: (n) => n + (n === 1 ? ' conta enviada para aprovação.' : ' contas enviadas para aprovação.') + ' A aprovação foi avisada.',
-  });
-}
-
 export async function telaMinhas({ subtitulo }) {
   const r = await api('contas.listar', { porPagina: 200 });
   const abertas = r.itens.filter((c) => !['PAGO', 'RECUSADO', 'CANCELADO'].includes(c.status));
@@ -152,10 +147,40 @@ export async function telaTodas({ subtitulo }) {
   };
   const resumo = h('div', { class: 'resumo' });
   const lista = h('div');
+  const fin = app.tem('FINANCEIRO');
+  // Seleção das "Lançadas" para subir para aprovação (só o financeiro)
+  const marcadas = new Map();
+  const totalSel = h('span', { class: 'num' });
+  const botaoSubir = h('button', { class: 'primario', style: { background: 'var(--ouro)', color: 'var(--marinho)', borderColor: 'var(--ouro)' } });
+  const barra = h('div', { class: 'barra-lote', hidden: true }, totalSel, botaoSubir);
+  const atualizarBarra = () => {
+    const sel = [...marcadas.values()];
+    totalSel.textContent = sel.length + (sel.length === 1 ? ' selecionada · ' : ' selecionadas · ') + reais(somar(sel));
+    botaoSubir.textContent = 'Subir para aprovação (' + sel.length + ')';
+    barra.hidden = !sel.length;
+  };
+  botaoSubir.onclick = () => comBotao(botaoSubir, async () => {
+    try {
+      const res = await api('contas.enviarBancoLote', { itens: [...marcadas.values()].map((c) => ({ contaId: c.id, versao: c.versao })) });
+      const ok = res.resultados.filter((x) => x.ok).length;
+      const falhas = res.resultados.filter((x) => !x.ok);
+      toast(ok + (ok === 1 ? ' conta enviada para aprovação.' : ' contas enviadas para aprovação.') + ' A dona foi avisada.' + (falhas.length ? ' ' + falhas.length + ' não foi(ram): ' + falhas[0].erro.mensagem : ''), { tipo: falhas.length ? 'erro' : '' });
+    } catch (e) { toast(e.message, { tipo: 'erro' }); }
+    marcadas.clear(); atualizarBarra();
+    await carregar(true);
+    app.atualizarContadores();
+  });
+  const selecao = (c) => {
+    if (!fin || c.status !== 'LANCADO') return null;
+    const cx = h('input', { type: 'checkbox', checked: marcadas.has(c.id), 'aria-label': 'Selecionar ' + c.rotulo + ' para subir para aprovação',
+      onchange: () => { cx.checked ? marcadas.set(c.id, c) : marcadas.delete(c.id); atualizarBarra(); } });
+    return cx;
+  };
+  const faltaSubir = h('button', { class: 'discreto', hidden: true, onclick: () => { f.status.value = 'LANCADO'; carregar(true); } });
   const mais = h('button', { hidden: true }, 'Carregar mais');
   let pagina = 1; let itens = [];
   const carregar = async (novaBusca) => {
-    if (novaBusca) { pagina = 1; itens = []; }
+    if (novaBusca) { pagina = 1; itens = []; marcadas.clear(); atualizarBarra(); }
     const r = await api('contas.listar', {
       empresaId: f.empresa.value || undefined, status: f.status.value ? [f.status.value] : [],
       vencimentoDe: f.de.value || undefined, vencimentoAte: f.ate.value || undefined,
@@ -164,7 +189,12 @@ export async function telaTodas({ subtitulo }) {
     });
     itens = itens.concat(r.itens);
     limpar(resumo, Object.entries(r.resumoPorStatus).map(([st, x]) => h('span', null, statusEl(st), ' ', h('b', null, x.quantidade), ' · ', h('b', null, reais(x.valorCentavos)))));
-    limpar(lista, listaContas(itens, 'Nenhuma conta com esses filtros.'));
+    limpar(lista, listaContas(itens, 'Nenhuma conta com esses filtros.', fin ? selecao : null));
+    if (fin) {
+      const n = (r.resumoPorStatus.LANCADO || {}).quantidade || 0;
+      faltaSubir.hidden = !n || f.status.value === 'LANCADO';
+      faltaSubir.textContent = n + (n === 1 ? ' conta lançada falta subir para aprovação: mostrar só ela' : ' contas lançadas faltam subir para aprovação: mostrar só elas');
+    }
     mais.hidden = itens.length >= r.total;
     subtitulo(r.total + (r.total === 1 ? ' conta encontrada' : ' contas encontradas'));
   };
@@ -185,7 +215,12 @@ export async function telaTodas({ subtitulo }) {
     } catch (e) { toast(e.message, { tipo: 'erro' }); }
   }) }, 'Exportar para Excel');
   await carregar(true);
+  const recorrentes = h('button', { onclick: () => app.navegar('recorrentes') }, 'Gerenciar recorrentes');
   return [
+    h('div', { class: 'acoes' },
+      fin ? h('button', { class: 'primario', onclick: () => app.navegar('lancar') }, '+ Nova conta') : null,
+      recorrentes,
+      fin ? h('span', { class: 'secundario pequeno' }, 'Para subir para aprovação: marque as contas "Lançadas" na lista.') : null),
     h('div', { class: 'bloco filtros' },
       h('label', { class: 'campo' }, 'Fornecedor', f.fornecedor),
       h('label', { class: 'campo' }, 'Descrição', f.descricao),
@@ -195,7 +230,7 @@ export async function telaTodas({ subtitulo }) {
       h('label', { class: 'campo' }, 'Vencimento de', f.de),
       h('label', { class: 'campo' }, 'até', f.ate),
       h('div', { class: 'acoes', style: { alignSelf: 'end' } }, exportar)),
-    resumo, lista, h('div', { class: 'acoes' }, mais),
+    resumo, faltaSubir, lista, h('div', { class: 'acoes' }, mais), barra,
   ];
 }
 
@@ -227,7 +262,7 @@ export const telaLancar = (ctx) => formularioConta('lancar', ctx);
 
 async function formularioConta(modo, { subtitulo }) {
   const lancar = modo === 'lancar';
-  subtitulo(lancar ? 'A conta fica em "Subir no banco" até você agendar no banco e marcar; só então vai para a aprovação.' : 'O financeiro recebe um aviso assim que você enviar.');
+  subtitulo(lancar ? 'A conta fica "Lançada". Depois de agendar no banco, marque-a em Contas a pagar e clique em "Subir para aprovação".' : 'O financeiro recebe um aviso assim que você enviar.');
   const empresas = app.cad.empresas.filter((e) => e.ativo);
   const fornecedores = await listaFornecedores();
   const idLista = 'fornecedores-' + modo;
@@ -332,6 +367,7 @@ async function formularioConta(modo, { subtitulo }) {
     return await api(lancar ? 'contas.lancar' : 'contas.solicitar', Object.assign({}, dados, confirmarDuplicidade ? { confirmarDuplicidade: true } : {}));
   }
 
+  const voltar = lancar ? h('div', { class: 'acoes' }, h('button', { type: 'button', class: 'discreto', onclick: () => app.navegar('contas') }, '← Voltar para Contas a pagar')) : null;
   const form = h('form', { class: 'bloco', onsubmit: async (e) => {
     e.preventDefault();
     erro.hidden = true;
@@ -359,7 +395,7 @@ async function formularioConta(modo, { subtitulo }) {
             await api('anexos.enviar', { contaId: primeira.id, tipo: f.tipoArquivo.value, nomeArquivo: arq.nomeArquivo, mime: arq.mime, conteudoBase64: arq.conteudoBase64 });
           } catch (e2) { toast('A conta foi criada, mas o anexo não foi enviado: ' + e2.message + ' Anexe pelo detalhe da conta.', { tipo: 'erro', duracao: 12000 }); }
         }
-        toast((lancar ? 'Conta ' : 'Solicitação ') + primeira.rotulo.replace(/-1\/\d+$/, '') + (r.contas.length > 1 ? ' (' + r.contas.length + ' parcelas)' : '') + (lancar ? ' lançada. Está em "Subir no banco".' : ' enviada.'),
+        toast((lancar ? 'Conta ' : 'Solicitação ') + primeira.rotulo.replace(/-1\/\d+$/, '') + (r.contas.length > 1 ? ' (' + r.contas.length + ' parcelas)' : '') + (lancar ? ' lançada.' : ' enviada.'),
           { acao: { rotulo: 'Ver', fn: () => abrirDetalhe(primeira.id) } });
       }
       app.recarregar();
@@ -386,7 +422,7 @@ async function formularioConta(modo, { subtitulo }) {
     !lancar ? h('label', { class: 'check largo' }, f.urgente, h('span', null, h('b', null, 'Urgente'), ' — precisa ser pago hoje. O financeiro recebe um alerta destacado.')) : null),
   erro,
   h('div', { class: 'acoes fim', style: { marginTop: '16px' } }, enviar));
-  return form;
+  return voltar ? [voltar, form] : form;
 }
 
 // ---------------------------------------------------------------------------
@@ -395,12 +431,12 @@ async function formularioConta(modo, { subtitulo }) {
 
 const NOME_ACAO = {
   lancar: 'Lançar conta', recusar: 'Recusar', cancelar: 'Cancelar conta', reenviar: 'Corrigir (volta para "Subir no banco")',
-  enviarBanco: 'Já subi no banco: enviar para aprovação', tirarDoBanco: 'Tirar do banco',
+  enviarBanco: 'Subir para aprovação', tirarDoBanco: 'Tirar da aprovação',
   aprovar: 'Aprovar', devolver: 'Devolver ao financeiro', confirmarPagamento: 'Confirmar pagamento',
 };
 const NOME_EVENTO = {
-  CONTA_CRIADA: 'Conta criada', CONTA_LANCAR: 'Lançada', CONTA_ENVIAR_BANCO: 'Enviada ao banco (para aprovação)',
-  CONTA_TIRAR_DO_BANCO: 'Retirada do banco', CONTA_APROVAR: 'Aprovada', CONTA_DEVOLVER: 'Devolvida ao financeiro',
+  CONTA_CRIADA: 'Conta criada', CONTA_LANCAR: 'Lançada', CONTA_ENVIAR_BANCO: 'Subiu para aprovação (agendada no banco)',
+  CONTA_TIRAR_DO_BANCO: 'Tirada da aprovação', CONTA_APROVAR: 'Aprovada', CONTA_DEVOLVER: 'Devolvida ao financeiro',
   CONTA_REENVIAR: 'Corrigida após devolução', CONTA_RECUSAR: 'Recusada', CONTA_CANCELAR: 'Cancelada', CONTA_CONFIRMAR_PAGAMENTO: 'Pagamento conferido no extrato',
   CONTA_EDITADA: 'Dados alterados', CONTA_COMENTADA: 'Comentário', ANEXO_ENVIADO: 'Anexo enviado', ANEXO_BAIXADO: 'Anexo aberto',
 };
@@ -606,16 +642,16 @@ async function executarAcao(a, c, botao, area, recarregar) {
       if (e.codigo === 'CONFLITO') recarregar();
     }
   };
+  if (a.acao === 'confirmarPagamento') return formPagamento(c, area, tratar, a.motivoObrigatorio);
   if (a.motivoObrigatorio) {
-    const titulos = { recusar: 'Recusar a solicitação', cancelar: 'Cancelar a conta', devolver: 'Devolver ao financeiro (não aprovada no banco)', tirarDoBanco: 'Tirar do banco (volta para "Subir no banco")' };
+    const titulos = { recusar: 'Recusar a solicitação', cancelar: 'Cancelar a conta', devolver: 'Devolver ao financeiro (não aprovada no banco)', tirarDoBanco: 'Tirar da aprovação (volta para "Lançada")' };
     const motivo = await pedirMotivo(titulos[a.acao] || NOME_ACAO[a.acao], NOME_ACAO[a.acao], true);
     if (!motivo) return;
-    return comBotao(botao, () => tratar(() => transicionar(c, a.acao, { motivo }), { recusar: 'Solicitação recusada.', cancelar: 'Conta cancelada.', devolver: 'Conta devolvida. O financeiro foi avisado.', tirarDoBanco: 'Conta voltou para "Subir no banco".' }[a.acao]));
+    return comBotao(botao, () => tratar(() => transicionar(c, a.acao, { motivo }), { recusar: 'Solicitação recusada.', cancelar: 'Conta cancelada.', devolver: 'Conta devolvida. O financeiro foi avisado.', tirarDoBanco: 'Conta voltou para "Lançada".' }[a.acao]));
   }
   if (a.acao === 'aprovar') return comBotao(botao, () => tratar(() => transicionar(c, 'aprovar'), 'Conta aprovada. O financeiro foi avisado.'));
-  if (a.acao === 'enviarBanco') return comBotao(botao, () => tratar(() => transicionar(c, 'enviarBanco'), 'Enviada para aprovação. A aprovação foi avisada.'));
+  if (a.acao === 'enviarBanco') return comBotao(botao, () => tratar(() => transicionar(c, 'enviarBanco'), 'Enviada para aprovação. A dona foi avisada.'));
   if (a.acao === 'lancar' || a.acao === 'reenviar') return formLancar(c, a.acao, area, tratar);
-  if (a.acao === 'confirmarPagamento') return formPagamento(c, area, tratar);
 }
 
 function formLancar(c, acao, area, tratar) {
@@ -630,7 +666,7 @@ function formLancar(c, acao, area, tratar) {
     const campos = { categoriaId: cat.value || undefined, formaPagamento: forma.value || undefined, contaBancariaId: conta.value || undefined };
     if (valor.centavos !== c.valorCentavos) campos.valorCentavos = valor.centavos;
     if (venc.value !== c.dataVencimento) campos.dataVencimento = venc.value;
-    return tratar(() => transicionar(c, acao, { campos, motivo: motivo.value.trim() || undefined }), acao === 'lancar' ? 'Conta lançada. Está em "Subir no banco".' : 'Conta corrigida. Está em "Subir no banco" de novo.');
+    return tratar(() => transicionar(c, acao, { campos, motivo: motivo.value.trim() || undefined }), acao === 'lancar' ? 'Conta lançada.' : 'Conta corrigida. Está "Lançada" de novo: suba para aprovação quando agendar no banco.');
   });
   limpar(area, h('div', { class: 'bloco acao-aberta' }, h('h3', null, NOME_ACAO[acao]),
     h('div', { class: 'grade-campos', style: { marginTop: '12px' } },
@@ -643,16 +679,18 @@ function formLancar(c, acao, area, tratar) {
   cat.focus();
 }
 
-function formPagamento(c, area, tratar) {
+function formPagamento(c, area, tratar, semAprovacao) {
   const hoje = hojeIso();
   const pago = h('input', { type: 'date', value: hoje, max: hoje });
   const comp = h('input', { type: 'date', value: hoje, max: hoje });
   const ref = h('input', { maxlength: 80, placeholder: 'Ex.: autenticação ou ID da transação' });
   const conferido = h('input', { type: 'checkbox' });
+  const justificativa = h('textarea', { maxlength: 500, placeholder: 'Ex.: a dona aprovou no banco dia 18 e esqueceu de aprovar no sistema' });
   const arquivo = h('input', { type: 'file', accept: 'application/pdf,image/jpeg,image/png' });
   const botao = h('button', { class: 'primario sucesso' }, 'Confirmar pagamento');
   botao.onclick = () => comBotao(botao, async () => {
     if (!conferido.checked) { toast('Marque que conferiu a compensação no extrato bancário.', { tipo: 'erro' }); return; }
+    if (semAprovacao && justificativa.value.trim().length < 10) { toast('Explique por que está dando baixa sem a aprovação da dona no sistema (mínimo 10 letras).', { tipo: 'erro' }); return; }
     if (arquivo.files[0]) {
       try {
         const a = await lerArquivo(arquivo.files[0]);
@@ -660,15 +698,18 @@ function formPagamento(c, area, tratar) {
       } catch (e) { toast('Comprovante não enviado, e o pagamento ainda NÃO foi confirmado: ' + e.message, { tipo: 'erro', duracao: 12000 }); return; }
     }
     await tratar(() => transicionar(c, 'confirmarPagamento', { dataPagamento: pago.value, dataCompensacao: comp.value,
-      referenciaBancaria: ref.value.trim() || undefined, conferidoNoExtrato: true }), 'Pagamento confirmado.');
+      referenciaBancaria: ref.value.trim() || undefined, conferidoNoExtrato: true,
+      motivo: semAprovacao ? justificativa.value.trim() : undefined }), semAprovacao ? 'Pagamento confirmado. A dona foi avisada.' : 'Pagamento confirmado.');
   });
   limpar(area, h('div', { class: 'bloco acao-aberta' }, h('h3', null, 'Confirmar pagamento'),
     h('p', { class: 'secundario pequeno', style: { marginTop: '6px' } }, 'Só confirme depois de ver o valor saindo da conta no extrato. O comprovante sozinho não basta.'),
+    semAprovacao ? h('p', { class: 'mensagem aviso' }, 'A dona ainda não aprovou esta conta no sistema. Se ela já aprovou no banco, você pode dar baixa explicando o motivo; ela recebe um aviso.') : null,
     h('div', { class: 'grade-campos', style: { marginTop: '12px' } },
       h('label', { class: 'campo' }, 'Data do pagamento', pago),
       h('label', { class: 'campo' }, 'Compensação no extrato', comp),
       h('label', { class: 'campo largo' }, 'Referência bancária', h('span', { class: 'dica' }, 'Opcional'), ref),
       h('label', { class: 'campo largo' }, 'Comprovante', h('span', { class: 'dica' }, 'PDF ou foto. Vai junto com o aviso de "Pago" para quem pediu; não precisa enviar de novo.'), arquivo),
+      semAprovacao ? h('label', { class: 'campo largo' }, 'Justificativa (obrigatória)', justificativa) : null,
       h('label', { class: 'check largo' }, conferido, 'Conferi no extrato bancário que o valor de ' + reais(c.valorCentavos) + ' foi compensado.')),
     h('div', { class: 'acoes fim', style: { marginTop: '12px' } }, h('button', { onclick: () => limpar(area) }, 'Fechar'), botao)));
 }

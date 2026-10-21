@@ -169,8 +169,10 @@ input.valor { font-variant-numeric: tabular-nums; text-align: right; }
 .vazio { padding: 40px 20px; text-align: center; color: var(--nevoa); display: grid; gap: 12px; justify-items: center; }
 
 .filtros { display: flex; flex-wrap: wrap; gap: 10px; align-items: end; }
-.filtros label.campo { min-width: 150px; flex: 1 1 150px; }
-.filtros .busca { flex: 3 1 240px; }
+.filtros { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); }
+.filtros label.campo { min-width: 0; }
+.filtros .busca { grid-column: span 2; }
+@media (max-width: 420px) { .filtros .busca { grid-column: auto; } }
 
 .resumo { display: flex; flex-wrap: wrap; gap: 8px 22px; font-size: 14px; }
 .resumo b { font-variant-numeric: tabular-nums; }
@@ -399,3 +401,8 @@ table.dre td:first-child { white-space: nowrap; }
 .comprovante-destaque { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap;
   border: 1px solid var(--st-pago); background: #EEF6F1; border-radius: 10px; padding: 12px 14px; margin-bottom: 12px; }
 .comprovante-destaque b { color: var(--st-pago); }
+
+/* Seções da tela Confirmar pagamento */
+.secao-lista { display: grid; gap: 6px; margin-bottom: 22px; }
+.secao-lista h2 { font-size: 17px; margin: 0; }
+.secao-lista h2 .secundario { font-weight: 500; font-size: 14px; }

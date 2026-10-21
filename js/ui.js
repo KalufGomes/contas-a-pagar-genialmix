@@ -93,14 +93,14 @@ export function hojeIso() {
 }
 
 export const ROTULO_STATUS = {
-  SOLICITADO: 'Solicitado', PREVISTA: 'Prevista', LANCADO: 'Lançada (subir no banco)', AGUARDANDO_APROVACAO: 'No banco, aguardando aprovação',
+  SOLICITADO: 'Solicitado', PREVISTA: 'Prevista', LANCADO: 'Lançada (falta subir)', AGUARDANDO_APROVACAO: 'Aguardando aprovação',
   DEVOLVIDO: 'Devolvido (tirar do banco)', APROVADO: 'Aprovado / agendado', PAGO: 'Pago', RECUSADO: 'Recusado', CANCELADO: 'Cancelado',
 };
 export const FORMAS = { BOLETO: 'Boleto', PIX: 'Pix', TED: 'TED', DEBITO_AUTOMATICO: 'Débito automático', CARTAO: 'Cartão', DINHEIRO: 'Dinheiro', OUTRO: 'Outro' };
 
 /** Trilho das cinco etapas; o ponto em ouro é onde a conta está. */
 export function trilho(status, grande) {
-  const etapas = ['Solicitada', 'Lançada', 'No banco', 'Aprovada', 'Paga'];
+  const etapas = ['Solicitada', 'Lançada', 'Em aprovação', 'Aprovada', 'Paga'];
   const indice = { SOLICITADO: 0, PREVISTA: 0, LANCADO: 1, DEVOLVIDO: 1, AGUARDANDO_APROVACAO: 2, APROVADO: 3, PAGO: 4 }[status];
   const encerrado = indice === undefined;
   return h('div', { class: 'trilho' + (grande ? ' grande' : '') + (encerrado ? ' encerrado' : ''), 'aria-hidden': 'true' },

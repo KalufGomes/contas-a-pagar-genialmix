@@ -3,7 +3,7 @@
  * Guarda só os arquivos da tela; respostas do servidor (dados) NUNCA são
  * guardadas no aparelho. Ao publicar uma nova versão, mude VERSAO.
  */
-const VERSAO = 'cap-v3';
+const VERSAO = 'cap-v6';
 const ARQUIVOS = [
   './', 'index.html', 'estilo.css', 'config.js', 'manifest.webmanifest',
   'js/app.js', 'js/api.js', 'js/ui.js', 'js/telas-contas.js', 'js/telas-financeiro.js', 'js/telas-admin.js', 'js/telas-relatorios.js',
@@ -25,8 +25,9 @@ self.addEventListener('activate', (e) => {
 self.addEventListener('fetch', (e) => {
   const url = new URL(e.request.url);
   if (e.request.method !== 'GET' || url.origin !== self.location.origin) return; // dados vão direto ao servidor
-  // Rede primeiro (versão nova assim que publicada); sem internet, usa a cópia guardada.
-  e.respondWith(fetch(e.request).then((r) => {
+  // Rede primeiro, sempre conferindo com o GitHub (sem esperar o cache do navegador);
+  // sem internet, usa a cópia guardada.
+  e.respondWith(fetch(url.href, { cache: 'no-cache', credentials: 'same-origin' }).then((r) => {
     if (r.ok) { const copia = r.clone(); caches.open(VERSAO).then((c) => c.put(e.request, copia)); }
     return r;
   }).catch(() => caches.match(e.request).then((r) => r || caches.match('index.html'))));
