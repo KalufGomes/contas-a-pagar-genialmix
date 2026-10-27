@@ -4,7 +4,7 @@
  * Esconder um item do menu é só conveniência: quem decide o que cada pessoa
  * pode ver ou fazer é o servidor, a cada chamada.
  */
-import { CONFIG } from '../config.js';
+import { CONFIG } from './config.js';
 import { api, sessao, carregarSessao, salvarSessao, limparSessao, quandoPerderSessao, ErroApi } from './api.js';
 import { h, limpar, icone, toast, dialogo, comBotao } from './ui.js';
 import * as contas from './telas-contas.js';
@@ -349,7 +349,7 @@ async function verificarAvisos() {
   if ('Notification' in window && Notification.permission === 'granted' && document.hidden) {
     try {
       const reg = await navigator.serviceWorker.getRegistration();
-      const opc = { body: novos[0].titulo, icon: 'icones/icone-192.png', badge: 'icones/icone-192.png', tag: novos[0].id, data: { contaId: novos[0].contaId } };
+      const opc = { body: novos[0].titulo, icon: 'icone-192.png', badge: 'icone-192.png', tag: novos[0].id, data: { contaId: novos[0].contaId } };
       if (reg) reg.showNotification(CONFIG.NOME_APP, opc); else new Notification(CONFIG.NOME_APP, opc);
     } catch (e) { /* notificação do sistema indisponível */ }
   }

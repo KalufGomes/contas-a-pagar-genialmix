@@ -3,14 +3,14 @@
  * Guarda só os arquivos da tela; respostas do servidor (dados) NUNCA são
  * guardadas no aparelho. Ao publicar uma nova versão, mude VERSAO.
  */
-const VERSAO = 'cap-v9';
+const VERSAO = 'cap-v10';
 const ARQUIVOS = [
   './', 'index.html', 'estilo.css', 'config.js', 'manifest.webmanifest',
-  'js/app.js', 'js/api.js', 'js/ui.js', 'js/telas-contas.js', 'js/telas-financeiro.js', 'js/telas-admin.js', 'js/telas-relatorios.js', 'js/push.js', 'js/telas-importacao.js',
-  'fontes/public-sans-latin-400-normal.woff2', 'fontes/public-sans-latin-500-normal.woff2',
-  'fontes/public-sans-latin-600-normal.woff2', 'fontes/public-sans-latin-700-normal.woff2',
-  'icones/icone-192.png', 'icones/icone-512.png', 'icones/favicon-32.png',
-  'marcas/genial-mix.png', 'marcas/rihappy.png', 'marcas/spoleto.png', 'marcas/kaluf-completa.png',
+  'app.js', 'api.js', 'ui.js', 'telas-contas.js', 'telas-financeiro.js', 'telas-admin.js', 'telas-relatorios.js', 'push.js', 'telas-importacao.js',
+  'public-sans-latin-400-normal.woff2', 'public-sans-latin-500-normal.woff2',
+  'public-sans-latin-600-normal.woff2', 'public-sans-latin-700-normal.woff2',
+  'icone-192.png', 'icone-512.png', 'favicon-32.png',
+  'genial-mix.png', 'rihappy.png', 'spoleto.png', 'kaluf-completa.png',
 ];
 
 self.addEventListener('install', (e) => {
@@ -41,7 +41,7 @@ self.addEventListener('push', (e) => {
   const n = msg.notification || {};
   const titulo = d.titulo || n.body || n.title || 'Você tem um novo aviso';
   e.waitUntil(self.registration.showNotification('Contas a Pagar', {
-    body: titulo, icon: 'icones/icone-192.png', badge: 'icones/icone-192.png',
+    body: titulo, icon: 'icone-192.png', badge: 'icone-192.png',
     tag: d.contaId || d.tipo || 'aviso', renotify: /URGENTE/.test(d.tipo || ''),
     data: { contaId: d.contaId || '', tipo: d.tipo || '' },
   }));

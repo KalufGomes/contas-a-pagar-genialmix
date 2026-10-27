@@ -5,7 +5,7 @@
  */
 import { api, sessao } from './api.js';
 import { app } from './app.js';
-import { CONFIG } from '../config.js';
+import { CONFIG } from './config.js';
 import { h, limpar, dataHora, toast, dialogo, pedirMotivo, comBotao, opcoes } from './ui.js';
 
 const NOME_PERFIL = { GERENTE: 'Gerente', FINANCEIRO: 'Financeiro', APROVADOR: 'Aprovação', GESTOR: 'Gestão (consulta e relatórios)', ADMIN: 'Administração' };

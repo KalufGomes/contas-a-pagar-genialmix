@@ -6,7 +6,7 @@
  * para o nosso servidor; é ele que dispara os avisos. O conteúdo do aviso é
  * só o título (nº da conta e tipo), sem valores.
  */
-import { CONFIG } from '../config.js';
+import { CONFIG } from './config.js';
 import { api } from './api.js';
 
 const VERSAO_FIREBASE = '10.12.2';

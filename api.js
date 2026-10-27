@@ -5,7 +5,7 @@
  * app, e nunca vai na URL. Cada gravação leva uma chave "idem" própria, então
  * um clique repetido ou um reenvio após falha de rede não grava duas vezes.
  */
-import { CONFIG } from '../config.js';
+import { CONFIG } from './config.js';
 
 const CHAVE = 'cap.sessao';
 export const sessao = { token: null, usuario: null, expiraEm: null };
