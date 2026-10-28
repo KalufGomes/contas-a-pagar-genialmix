@@ -20,11 +20,11 @@ export const CONFIG = {
   // Avisos com o app fechado. Valores do Firebase (Configurações do projeto → Seus apps → app da Web,
   // e Cloud Messaging → Certificados push da Web para a vapidKey). Não são segredos.
   FIREBASE: {
-    apiKey: '',
-    authDomain: '',
-    projectId: '',
-    messagingSenderId: '',
-    appId: '',
-    vapidKey: '',
+    apiKey: 'AIzaSyCOrmmHr7oOUQs4ilDQyW1q81TFlhelI4A',
+    authDomain: 'contas-genialmix-b96e0.firebaseapp.com',
+    projectId: 'contas-genialmix-b96e0',
+    messagingSenderId: '155816210796',
+    appId: '1:155816210796:web:fbdaeeded20193c42d8349',
+    vapidKey: 'BERidOkhNi7PQUhN351ow8PVujFNkpugQdwNaz-zzypy4WxrH8y4njiW3_ScuUfQgGVxsaLZ2XlMfY-7I_1TqNs',
   },
 };
