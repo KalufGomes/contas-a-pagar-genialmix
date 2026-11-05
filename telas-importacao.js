@@ -54,17 +54,13 @@ export function lerRelatorioArius(texto) {
 }
 
 export async function telaImportar({ subtitulo }) {
-  subtitulo('Relatório de contas a pagar do Arius (RiHappy). Só entram as contas "EM ABERTO"; as que já foram lançadas são puladas.');
+  subtitulo('Relatório de contas a pagar do Arius (RiHappy). Só entram as contas "EM ABERTO"; as que já foram lançadas são puladas. A conta de pagamento é escolhida depois, ao subir para aprovação.');
   const empresas = app.cad.empresas.filter((e) => e.ativo);
   const padrao = (empresas.find((e) => e.marca === 'rihappy') || empresas[0] || {}).id || '';
   const f = {
     empresa: h('select', null, opcoes(empresas.map((e) => [e.id, e.nome]), padrao)),
-    conta: h('select'),
     arquivo: h('input', { type: 'file', accept: '.xls,.html,.htm,text/html,application/vnd.ms-excel' }),
   };
-  const atualizarContas = () => limpar(f.conta, opcoes(app.cad.contasBancarias.filter((c) => c.empresaId === f.empresa.value && c.ativo)
-    .map((c) => [c.id, c.apelido + ' · ' + c.banco + ' final ' + c.contaFinal]), '', 'Escolha'));
-  atualizarContas();
   const area = h('div');
   let lido = null;
   let mapa = {};
@@ -79,7 +75,7 @@ export async function telaImportar({ subtitulo }) {
     const res = [];
     for (let i = 0; i < linhas.length; i += LOTE) {
       if (progresso) progresso(i, linhas.length);
-      const r = await api('contas.importar', { empresaId: f.empresa.value, contaBancariaId: f.conta.value, origemArquivo: 'Arius',
+      const r = await api('contas.importar', { empresaId: f.empresa.value, origemArquivo: 'Arius',
         simular, itens: montarItens(linhas.slice(i, i + LOTE)) });
       r.resultados.forEach((x) => res.push(Object.assign({}, x, { linha: i + x.linha })));
     }
@@ -112,7 +108,6 @@ export async function telaImportar({ subtitulo }) {
     const conferir = h('button', { class: 'primario' }, 'Conferir o que já foi lançado');
     const resultado = h('div');
     conferir.onclick = () => comBotao(conferir, async () => {
-      if (!f.conta.value) { toast('Escolha a conta bancária que vai pagar as contas.', { tipo: 'erro' }); return; }
       if (Object.values(mapa).some((s) => !s.value)) { toast('Escolha a categoria de cada categoria do Arius.', { tipo: 'erro' }); return; }
       let res;
       try { res = await enviar(true, lido.linhas); } catch (e) { toast(e.message, { tipo: 'erro' }); return; }
@@ -128,7 +123,7 @@ export async function telaImportar({ subtitulo }) {
         const criadas = res2.filter((x) => x.situacao === 'criada').length;
         progresso.textContent = '';
         limpar(resultado, h('p', { class: 'mensagem aviso' }, criadas + (criadas === 1 ? ' conta importada' : ' contas importadas') +
-          ' como "Lançada". Elas aparecem em Contas a pagar para subir para aprovação.'),
+          ' como "Lançada". Em Contas a pagar, marque as que vai pagar e clique em "Subir para aprovação": é ali que escolhe a conta de pagamento.'),
           h('div', { class: 'acoes' }, h('button', { class: 'primario', onclick: () => app.navegar('contas') }, 'Ver em Contas a pagar')),
           tabelaResultado(novas, res2));
         toast(criadas + ' contas importadas.');
@@ -156,14 +151,13 @@ export async function telaImportar({ subtitulo }) {
       mostrarLeitura();
     } catch (e) { limpar(area, h('p', { class: 'mensagem erro' }, e.message)); }
   });
-  f.empresa.addEventListener('change', () => { atualizarContas(); if (lido) mostrarLeitura(); });
+  f.empresa.addEventListener('change', () => { if (lido) mostrarLeitura(); });
 
   return [
     h('div', { class: 'acoes' }, h('button', { class: 'discreto', onclick: () => app.navegar('contas') }, '← Voltar para Contas a pagar')),
     h('section', { class: 'bloco' },
       h('div', { class: 'grade-campos' },
         h('label', { class: 'campo' }, 'Empresa', f.empresa),
-        h('label', { class: 'campo' }, 'Pagar pela conta', f.conta),
         h('label', { class: 'campo largo' }, 'Arquivo do Arius', h('span', { class: 'dica' }, 'No Arius: Contas a pagar → exportar em formato planilha (.xls).'), f.arquivo))),
     area,
   ];

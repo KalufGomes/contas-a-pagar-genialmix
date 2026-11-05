@@ -5,17 +5,18 @@
  * pode ver ou fazer é o servidor, a cada chamada.
  */
 import { CONFIG } from './config.js';
-import { api, sessao, carregarSessao, salvarSessao, limparSessao, quandoPerderSessao, ErroApi } from './api.js';
+import { api, aoReceber, sessao, carregarSessao, salvarSessao, limparSessao, quandoPerderSessao, ErroApi } from './api.js';
 import { h, limpar, icone, toast, dialogo, comBotao } from './ui.js';
 import * as contas from './telas-contas.js';
 import * as fin from './telas-financeiro.js';
 import * as adm from './telas-admin.js';
 import * as rel from './telas-relatorios.js';
 import { telaImportar } from './telas-importacao.js';
+import { telaConciliacao, telaHolerites } from './telas-conciliacao.js';
 import { ativarPush, situacaoPush } from './push.js';
 
 /** Mostrada no rodapé: confirma que o aparelho está com as telas novas. */
-const VERSAO_TELA = '0.9.0';
+const VERSAO_TELA = '0.10.1';
 
 const raiz = document.getElementById('app');
 
@@ -46,15 +47,17 @@ export const app = {
  * "contador": status somados no número ao lado do item (pode variar por perfil).
  */
 const ROTAS = [
-  { id: 'para-fazer', titulo: 'Para fazer', perfis: ['FINANCEIRO'], icone: 'caixa', contador: ['SOLICITADO', 'PREVISTA', 'DEVOLVIDO'], tela: contas.telaParaFazer },
-  { id: 'para-aprovar', titulo: 'Para aprovar', perfis: ['APROVADOR'], icone: 'check', contador: ['AGUARDANDO_APROVACAO'], tela: contas.telaParaAprovar },
+  { id: 'para-fazer', titulo: 'Para fazer', perfis: ['FINANCEIRO'], icone: 'caixa', contador: (r) => r.contadores.paraFazer, tela: contas.telaParaFazer },
+  { id: 'para-aprovar', titulo: 'Para aprovar', perfis: ['APROVADOR'], icone: 'check', contador: (r) => r.contadores.aguardando, tela: contas.telaParaAprovar },
   { id: 'contas', titulo: 'Contas a pagar', curto: 'Contas', perfis: ['FINANCEIRO', 'APROVADOR', 'GESTOR'], icone: 'lista',
-    contador: () => (app.tem('FINANCEIRO') ? ['LANCADO'] : null), tela: contas.telaTodas },
-  { id: 'a-pagar', titulo: 'Confirmar pagamento', curto: 'Pagamentos', perfis: ['FINANCEIRO'], icone: 'carteira', contador: ['AGUARDANDO_APROVACAO', 'APROVADO'], tela: contas.telaAPagar },
+    contador: () => (app.tem('FINANCEIRO') ? (r) => r.contadores.contasPendentes : null), tela: contas.telaTodas },
+  { id: 'a-pagar', titulo: 'Confirmar pagamento', curto: 'Pagamentos', perfis: ['FINANCEIRO'], icone: 'carteira', contador: (r) => r.contadores.aguardando + r.contadores.aprovadas, tela: contas.telaAPagar },
   { id: 'nova-solicitacao', titulo: 'Nova solicitação', curto: 'Solicitar', perfis: ['GERENTE'], icone: 'mais', tela: contas.telaNovaSolicitacao },
   { id: 'minhas', titulo: 'Minhas solicitações', curto: 'Minhas', perfis: ['GERENTE'], icone: 'lista', tela: contas.telaMinhas },
   { id: 'lancar', titulo: 'Nova conta', perfis: ['FINANCEIRO'], oculta: true, pai: 'contas', tela: contas.telaLancar },
   { id: 'importar', titulo: 'Importar contas do Arius', perfis: ['FINANCEIRO'], oculta: true, pai: 'contas', tela: telaImportar },
+  { id: 'holerites', titulo: 'Importar holerites', perfis: ['FINANCEIRO'], oculta: true, pai: 'contas', tela: telaHolerites },
+  { id: 'conciliacao', titulo: 'Extratos e Soft Up', curto: 'Extratos', perfis: ['FINANCEIRO', 'APROVADOR', 'GESTOR'], icone: 'entrada', tela: telaConciliacao },
   { id: 'painel', titulo: 'Painel', perfis: ['FINANCEIRO', 'APROVADOR', 'GESTOR'], icone: 'grafico', tela: rel.telaPainel },
   { id: 'dre', titulo: 'DRE gerencial', curto: 'DRE', perfis: ['GESTOR'], icone: 'tabela', tela: rel.telaDre },
   { id: 'receitas', titulo: 'Receitas', perfis: ['FINANCEIRO', 'APROVADOR', 'GESTOR'], icone: 'entrada', tela: fin.telaReceitas },
@@ -72,7 +75,8 @@ const rotasPermitidas = () => ROTAS.filter((r) => app.tem(...r.perfis));
 /** Quem só acompanha (gestor) começa pelo painel; os demais, pela primeira tarefa do menu. */
 const rotaInicial = (menu) => (app.tem('GESTOR') && !app.tem('FINANCEIRO', 'APROVADOR', 'GERENTE') && menu.find((r) => r.id === 'painel')) || menu[0];
 const rotasDoMenu = () => rotasPermitidas().filter((r) => !r.oculta);
-const statusDoContador = (r) => (typeof r.contador === 'function' ? r.contador() : r.contador);
+/** Contador do menu: lista de status somados, ou função que lê o número na resposta de contas.listar. */
+const statusDoContador = (r) => (typeof r.contador === 'function' && r.contador.length === 0 ? r.contador() : r.contador);
 
 // ---------------------------------------------------------------------------
 // Login e troca de senha
@@ -233,6 +237,7 @@ async function rotear() {
   document.title = rota.titulo + ' · ' + CONFIG.NOME_APP;
   tituloBase = document.title;
   limpar(els.conteudo, h('div', { class: 'vazio' }, 'Carregando…'));
+  const inicioTela = Date.now();
   try {
     const tela = await rota.tela({ app, subtitulo: (t) => { els.subtitulo.textContent = t; els.subtitulo.hidden = !t; } });
     limpar(els.conteudo, tela);
@@ -241,7 +246,8 @@ async function rotear() {
     limpar(els.conteudo, h('div', { class: 'vazio' }, h('p', null, e.message || 'Não foi possível carregar.'),
       h('button', { onclick: rotear }, 'Tentar de novo')));
   }
-  atualizarContadores();
+  // A maioria das telas já trouxe os números do menu junto com a lista: não precisa ir de novo ao servidor.
+  if (ultimosContadores < inicioTela) atualizarContadores();
 }
 app.recarregar = rotear;
 
@@ -249,18 +255,37 @@ app.recarregar = rotear;
 const ROTAS_AUTO = ['para-fazer', 'para-aprovar', 'a-pagar', 'minhas'];
 function atualizarListaAberta() {
   const id = (location.hash.replace(/^#\/?/, '') || '').split('?')[0] || (rotaInicial(rotasDoMenu()) || {}).id;
-  if (!ROTAS_AUTO.includes(id) || document.querySelector('.painel, .dialogo, .barra-lote:not([hidden])')) return;
+  if (!ROTAS_AUTO.includes(id) || document.querySelector('.painel, .dialogo, .barra-lote:not([hidden])')) return false;
   rotear();
+  return true;
 }
 
 let jaAvisouVencidas = false;
+let ultimosContadores = 0;
+/** Números do menu e faixa de vencidas, a partir de qualquer resposta de contas.listar. */
+function aplicarContadores(r) {
+  if (!r || !r.contadores || !els.conteudo) return;
+  ultimosContadores = Date.now();
+  rotasDoMenu().filter((x) => statusDoContador(x)).forEach((rota) => {
+    const regra = statusDoContador(rota);
+    const n = typeof regra === 'function' ? (regra(r) || 0) : regra.reduce((s, st) => s + ((r.resumoPorStatus[st] || {}).quantidade || 0), 0);
+    [rota.linkMenu, rota.linkAba].forEach((l) => {
+      const c = l && l.querySelector('.contador');
+      if (c) { c.textContent = n; c.hidden = n === 0; }
+    });
+  });
+  mostrarVencidas(r.vencidasVisiveis || 0);
+}
+aoReceber('contas.listar', aplicarContadores);
 async function atualizarContadores() {
   const rotas = rotasDoMenu().filter((r) => statusDoContador(r));
   if (!app.tem('GERENTE', 'FINANCEIRO', 'APROVADOR', 'GESTOR')) return;
   try {
     const r = await api('contas.listar', { porPagina: 1 });
+    if (r) return; // aplicado pelo aoReceber
     rotas.forEach((rota) => {
-      const n = statusDoContador(rota).reduce((s, st) => s + ((r.resumoPorStatus[st] || {}).quantidade || 0), 0);
+      const regra = statusDoContador(rota);
+      const n = typeof regra === 'function' ? (regra(r) || 0) : regra.reduce((s, st) => s + ((r.resumoPorStatus[st] || {}).quantidade || 0), 0);
       [rota.linkMenu, rota.linkAba].forEach((l) => {
         const c = l && l.querySelector('.contador');
         if (c) { c.textContent = n; c.hidden = n === 0; }
@@ -329,7 +354,11 @@ function bipe() {
   } catch (e) { /* som indisponível */ }
 }
 
-async function verificarAvisos() {
+let ticsEscondido = 0;
+async function verificarAvisos(forcar) {
+  // App minimizado ou em outra aba: consulta só a cada 3 minutos (o aviso com o app fechado chega pelo Firebase). Ao reabrir, consulta na hora.
+  if (document.hidden && forcar !== true && (++ticsEscondido % 3) !== 0) return;
+  if (!document.hidden) ticsEscondido = 0;
   let r;
   try { r = await api('notificacoes.listar', { apenasNaoLidas: true }); } catch (e) { return; }
   [els.sinoTopo, els.sinoMovel].forEach((s) => { if (s) { s.contador.textContent = r.naoLidas; s.contador.hidden = !r.naoLidas; } });
@@ -353,8 +382,7 @@ async function verificarAvisos() {
       if (reg) reg.showNotification(CONFIG.NOME_APP, opc); else new Notification(CONFIG.NOME_APP, opc);
     } catch (e) { /* notificação do sistema indisponível */ }
   }
-  atualizarContadores();
-  atualizarListaAberta();
+  if (!atualizarListaAberta()) atualizarContadores();
 }
 
 document.addEventListener('visibilitychange', () => { if (!document.hidden) { pararPiscar(); if (sessao.token) verificarAvisos(); } });
@@ -363,7 +391,8 @@ async function abrirAviso(n) {
   try { await api('notificacoes.marcarLidas', { ids: [n.id] }); } catch (e) { /* segue */ }
   verificarAvisos();
   if (n.contaId) { app.abrirConta(n.contaId); return; }
-  const rota = { APROVADA_LOTE: 'a-pagar', AGUARDANDO_APROVACAO_LOTE: 'para-aprovar' }[n.tipo];
+  const rota = { APROVADA_LOTE: 'a-pagar', AGUARDANDO_APROVACAO_LOTE: 'para-aprovar', PAGAS_EXTRATO_LOTE: 'contas',
+    EXTRATO_PENDENTE_LOTE: 'conciliacao', RECEITAS_EXTRATO_LOTE: 'receitas' }[n.tipo];
   if (rota) app.navegar(rota);
 }
 

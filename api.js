@@ -34,6 +34,10 @@ export function quandoPerderSessao(fn) { aoPerderSessao = fn; }
 
 const novaChave = () => (crypto.randomUUID ? crypto.randomUUID() : String(Date.now()) + Math.random().toString(16).slice(2) + 'abcdefgh');
 
+const ouvintes = {};
+/** Avisa quando chega uma resposta de certa ação (ex.: os números do menu vêm junto com contas.listar). */
+export function aoReceber(acao, fn) { (ouvintes[acao] = ouvintes[acao] || []).push(fn); }
+
 /** Chama uma ação do servidor. Retorna `dados` ou lança ErroApi. */
 export async function api(acao, dados = {}, opcoes = {}) {
   const corpo = { acao, dados, idem: opcoes.idem || novaChave() };
@@ -52,7 +56,10 @@ export async function api(acao, dados = {}, opcoes = {}) {
       if (tentativa === 1) throw new ErroApi('SEM_CONEXAO', 'Sem conexão com o servidor. Confira a internet e tente de novo.');
     }
   }
-  if (resposta && resposta.ok) return resposta.dados;
+  if (resposta && resposta.ok) {
+    (ouvintes[acao] || []).forEach((fn) => { try { fn(resposta.dados); } catch (e) { /* só ajuda visual */ } });
+    return resposta.dados;
+  }
   const erro = (resposta && resposta.erro) || { codigo: 'ERRO', mensagem: 'Resposta inesperada do servidor.' };
   if (erro.codigo === 'NAO_AUTENTICADO' && acao !== 'auth.login') aoPerderSessao(erro.mensagem);
   throw new ErroApi(erro.codigo, erro.mensagem);

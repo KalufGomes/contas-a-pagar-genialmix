@@ -199,6 +199,8 @@ input.valor { font-variant-numeric: tabular-nums; text-align: right; }
 .etiquetas { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 4px; }
 .etiqueta { font-size: 12px; font-weight: 600; padding: 1px 8px; border-radius: 999px; background: var(--papel); color: var(--nevoa); }
 .etiqueta.urgente { background: #FBE4DF; color: #9A2F20; }
+.etiqueta.ok { background: #DFF3E6; color: #1F6B3A; }
+.etiqueta.aviso { background: #FBF0D9; color: #8A5A0B; }
 
 .status { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 600; white-space: nowrap; }
 .status::before { content: ''; width: 9px; height: 9px; border-radius: 50%; background: currentColor; flex: none; }

@@ -105,9 +105,12 @@ function novoUsuario(depois) {
 function concederPerfil(u, depois) {
   return dialogo((fechar) => {
     const perfil = h('select', null, opcoes(Object.entries(NOME_PERFIL), '', 'Escolha'));
-    const caixas = app.cad.empresas.filter((e) => e.ativo).map((e) => ({ e, cx: h('input', { type: 'checkbox' }) }));
+    const jaGerente = (u.perfis || []).find((p) => p.perfil === 'GERENTE' && p.ativo);
+    const caixas = app.cad.empresas.filter((e) => e.ativo).map((e) => ({ e, cx: h('input', { type: 'checkbox', checked: !!(jaGerente && jaGerente.empresas.includes(e.id)), disabled: !!(jaGerente && jaGerente.empresas.includes(e.id)) }) }));
+    const todasEmpresas = h('button', { type: 'button', class: 'discreto', onclick: () => caixas.forEach(({ cx }) => { cx.checked = true; }) }, 'Marcar todas');
     const blocoEmpresas = h('div', { class: 'campo', hidden: true }, h('span', null, 'Empresa(s) do gerente'),
-      caixas.map(({ e, cx }) => h('label', { class: 'check' }, cx, e.nome)));
+      jaGerente ? h('span', { class: 'dica' }, 'Já é gerente das empresas marcadas; as novas que você marcar são somadas.') : h('span', { class: 'dica' }, 'Pode marcar mais de uma: o gerente escolhe a empresa ao pedir o pagamento.'),
+      caixas.map(({ e, cx }) => h('label', { class: 'check' }, cx, e.nome)), todasEmpresas);
     perfil.addEventListener('change', () => { blocoEmpresas.hidden = perfil.value !== 'GERENTE'; });
     const motivo = h('input', { maxlength: 300, placeholder: 'Ex.: nova gerente da loja' });
     const erro = h('p', { class: 'mensagem erro', hidden: true });
@@ -115,13 +118,13 @@ function concederPerfil(u, depois) {
     botao.onclick = () => comBotao(botao, async () => {
       try {
         await api('admin.perfis.conceder', { usuarioId: u.id, perfil: perfil.value, motivo: motivo.value.trim(),
-          empresas: perfil.value === 'GERENTE' ? caixas.filter((x) => x.cx.checked).map((x) => x.e.id) : undefined });
-        fechar(true); toast('Perfil concedido.'); depois();
+          empresas: perfil.value === 'GERENTE' ? caixas.filter((x) => x.cx.checked && !x.cx.disabled).map((x) => x.e.id) : undefined });
+        fechar(true); toast(jaGerente && perfil.value === 'GERENTE' ? 'Empresas somadas ao perfil de gerente.' : 'Perfil concedido.'); depois();
       } catch (e) { erroEm(erro)(e); }
     });
     return [h('h2', null, 'Dar perfil a ' + u.nome),
       h('label', { class: 'campo' }, 'Perfil', perfil),
-      h('p', { class: 'secundario pequeno' }, 'Gerente solicita pagamentos da sua empresa. Financeiro lança, confirma pagamentos e lança receitas. Aprovação aprova ou devolve. Gestão consulta tudo, sem alterar.'),
+      h('p', { class: 'secundario pequeno' }, 'A mesma pessoa pode ter vários perfis (ex.: financeiro e gerente). Gerente solicita pagamentos das empresas marcadas. Financeiro lança, confirma pagamentos e lança receitas. Aprovação aprova ou devolve. Gestão consulta tudo, sem alterar.'),
       blocoEmpresas, h('label', { class: 'campo' }, 'Motivo', motivo), erro,
       h('div', { class: 'acoes fim' }, h('button', { onclick: () => fechar(false) }, 'Voltar'), botao)];
   });

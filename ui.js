@@ -200,3 +200,84 @@ export function opcoes(lista, selecionado, vazio) {
   return [vazio !== undefined ? h('option', { value: '' }, vazio) : null]
     .concat(lista.map(([v, r]) => h('option', { value: v, selected: v === selecionado }, r)));
 }
+
+// ---------------------------------------------------------------------------
+// Relatórios em planilha (CSV aberto pelo Excel) e bibliotecas sob demanda
+// ---------------------------------------------------------------------------
+
+/** Célula segura para o Excel: textos que começam com = + - @ não viram fórmula. */
+function celulaCsv(v) {
+  if (v === null || v === undefined) return '';
+  let s = typeof v === 'number' ? String(v).replace('.', ',') : String(v);
+  if (typeof v !== 'number' && /^[=+\-@\t\r]/.test(s)) s = "'" + s;
+  return /[";\n\r]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+}
+
+/** Baixa uma planilha (CSV com ; e acentos, abre direto no Excel). linhas: listas de valores. */
+export function exportarPlanilha(nomeArquivo, cabecalho, linhas) {
+  const conteudo = [cabecalho].concat(linhas).map((l) => l.map(celulaCsv).join(';')).join('\r\n');
+  const url = URL.createObjectURL(new Blob(['﻿' + conteudo], { type: 'text/csv;charset=utf-8' }));
+  const a = h('a', { href: url, download: nomeArquivo.replace(/[^\w.-]+/g, '-') + (nomeArquivo.endsWith('.csv') ? '' : '.csv') });
+  document.body.append(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 60000);
+  toast(linhas.length + (linhas.length === 1 ? ' linha exportada.' : ' linhas exportadas.'));
+}
+/** Valor em reais para planilha (número com vírgula). */
+export const reaisPlanilha = (centavos) => Number(((Number(centavos) || 0) / 100).toFixed(2));
+
+const scriptsCarregados = {};
+/** Carrega uma biblioteca do próprio site só quando a tela precisa dela. */
+export function carregarScript(arquivo) {
+  if (!scriptsCarregados[arquivo]) {
+    scriptsCarregados[arquivo] = new Promise((ok, falha) => {
+      const s = document.createElement('script');
+      s.src = arquivo; s.async = true;
+      s.onload = () => ok(); s.onerror = () => { delete scriptsCarregados[arquivo]; falha(new Error('Não foi possível carregar o leitor de arquivos. Confira a internet e tente de novo.')); };
+      document.head.append(s);
+    });
+  }
+  return scriptsCarregados[arquivo];
+}
+
+/** Lê a 1ª aba de um Excel (.xlsx/.xls) como lista de listas. */
+export async function lerPlanilha(arquivo) {
+  await carregarScript('xlsx.mini.min.js');
+  const wb = window.XLSX.read(new Uint8Array(await arquivo.arrayBuffer()), { type: 'array', cellDates: true });
+  return window.XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { header: 1, raw: true, defval: '' });
+}
+
+/** Lê o texto de um PDF: uma lista de linhas (de cima para baixo) por página. */
+export async function lerTextoPdf(arquivo) {
+  await carregarScript('pdf.min.js');
+  const pdfjs = window.pdfjsLib;
+  pdfjs.GlobalWorkerOptions.workerSrc = 'pdf.worker.min.js';
+  const doc = await pdfjs.getDocument({ data: new Uint8Array(await arquivo.arrayBuffer()), isEvalSupported: false, verbosity: 0 }).promise;
+  const paginas = [];
+  for (let p = 1; p <= doc.numPages; p++) {
+    const tc = await (await doc.getPage(p)).getTextContent();
+    const linhas = {};
+    tc.items.forEach((i) => {
+      if (!i.str || !i.str.trim()) return;
+      const y = Math.round(i.transform[5] / 2) * 2;
+      (linhas[y] = linhas[y] || []).push([i.transform[4], i.str]);
+    });
+    paginas.push(Object.keys(linhas).map(Number).sort((a, b) => b - a).map((y) => linhas[y].sort((a, b) => a[0] - b[0]).map((x) => x[1]).join(' ')));
+  }
+  return paginas;
+}
+
+/** Caixa de busca que filtra uma lista já carregada (sem ir ao servidor). */
+export function buscaLocal(placeholder, aoMudar) {
+  const el = h('input', { type: 'search', placeholder: placeholder || 'Buscar' });
+  let espera;
+  el.addEventListener('input', () => { clearTimeout(espera); espera = setTimeout(() => aoMudar(el.value), 250); });
+  return el;
+}
+/** O texto bate com a busca? (sem acento, sem maiúsculas; valor "1.234,56" ou "1234,56" também). */
+export function bateBusca(busca, ...campos) {
+  const b = String(busca || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').trim();
+  if (!b) return true;
+  const alvo = campos.map((c) => (typeof c === 'number' ? (c / 100).toFixed(2).replace('.', ',') + ' ' + reais(c) : String(c || ''))).join(' ')
+    .toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
+  return b.split(/\s+/).every((p) => alvo.includes(p) || alvo.replace(/\./g, '').includes(p));
+}

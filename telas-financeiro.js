@@ -3,7 +3,7 @@
  */
 import { api } from './api.js';
 import { app } from './app.js';
-import { h, limpar, reais, data, hojeIso, toast, dialogo, pedirMotivo, comBotao, campoValor, opcoes } from './ui.js';
+import { h, limpar, reais, data, hojeIso, toast, dialogo, pedirMotivo, comBotao, campoValor, opcoes, exportarPlanilha, reaisPlanilha, buscaLocal, bateBusca } from './ui.js';
 
 const primeiroDoMes = () => hojeIso().slice(0, 8) + '01';
 
@@ -18,13 +18,21 @@ export async function telaReceitas({ subtitulo }) {
     de: h('input', { type: 'date', value: primeiroDoMes() }),
     ate: h('input', { type: 'date', value: hojeIso() }),
     canceladas: h('input', { type: 'checkbox' }),
+    categoria: h('select', null, opcoes(app.cad.categorias.filter((c) => c.ativo && c.natureza === 'RECEITA').map((c) => [c.id, c.codigo + ' ' + c.nome]), '', 'Todas')),
+    busca: h('input', { type: 'search', placeholder: 'Descrição, nome de quem pagou ou valor' }),
   };
   const total = h('p', { class: 'resumo' });
   const tabela = h('div', { class: 'bloco rolagem' });
+  let ultimas = [];
+  const exportar = h('button', { onclick: () => exportarPlanilha('receitas-' + hojeIso(), ['Data', 'Empresa', 'Conta', 'Categoria', 'Descrição', 'Valor (R$)', 'Situação', 'Lançado por'],
+    ultimas.map((x) => { const cb = app.contaBancaria(x.contaBancariaId); const cat = app.categoria(x.categoriaId);
+      return [data(x.data), app.nomeEmpresa(x.empresaId), cb ? cb.apelido : '', cat ? cat.codigo + ' ' + cat.nome : '', x.descricao, reaisPlanilha(x.valorCentavos), x.status === 'CANCELADA' ? 'Cancelada' : 'Ativa', x.lancadoPor]; })) }, 'Exportar para Excel');
   const carregar = async () => {
     const r = await api('receitas.listar', { empresaId: filtro.empresa.value || undefined, de: filtro.de.value || undefined,
-      ate: filtro.ate.value || undefined, incluirCanceladas: filtro.canceladas.checked });
-    limpar(total, h('span', null, 'Entradas no período: ', h('b', null, reais(r.totalCentavos))));
+      ate: filtro.ate.value || undefined, incluirCanceladas: filtro.canceladas.checked, categoriaId: filtro.categoria.value || undefined,
+      busca: filtro.busca.value.trim() || undefined });
+    ultimas = r.itens;
+    limpar(total, h('span', null, (r.quantidade || r.itens.length) + ' entradas · total ', h('b', null, reais(r.totalCentavos))));
     subtitulo('Entradas lançadas conforme o extrato de cada conta bancária. Base da DRE gerencial.');
     limpar(tabela, !r.itens.length ? h('div', { class: 'vazio' }, 'Nenhuma entrada no período.') : h('table', { class: 'tabela' },
       h('thead', null, h('tr', null, ['Data', 'Empresa', 'Conta', 'Categoria', 'Descrição', 'Valor', ''].map((t, i) => h('th', { class: i === 5 ? 'direita' : '' }, t)))),
@@ -44,12 +52,17 @@ export async function telaReceitas({ subtitulo }) {
           } }, 'Cancelar') : null));
       }))));
   };
-  Object.values(filtro).forEach((el) => el.addEventListener('change', carregar));
+  let espera;
+  Object.values(filtro).forEach((el) => el.addEventListener(el.type === 'search' ? 'input' : 'change', () => { clearTimeout(espera); espera = setTimeout(carregar, el.type === 'search' ? 350 : 0); }));
   await carregar();
   return [fin ? formReceita(carregar) : null,
+    h('p', { class: 'secundario pequeno' }, 'As entradas dos extratos importados (em "Extratos e Soft Up") já entram aqui sozinhas.'),
     h('div', { class: 'bloco filtros' },
-      h('label', { class: 'campo' }, 'Empresa', filtro.empresa), h('label', { class: 'campo' }, 'De', filtro.de),
-      h('label', { class: 'campo' }, 'Até', filtro.ate), h('label', { class: 'check' }, filtro.canceladas, 'Mostrar canceladas')),
+      h('label', { class: 'campo busca' }, 'Buscar', filtro.busca),
+      h('label', { class: 'campo' }, 'Empresa', filtro.empresa), h('label', { class: 'campo' }, 'Categoria', filtro.categoria),
+      h('label', { class: 'campo' }, 'De', filtro.de),
+      h('label', { class: 'campo' }, 'Até', filtro.ate), h('label', { class: 'check' }, filtro.canceladas, 'Mostrar canceladas'),
+      h('div', { class: 'acoes', style: { alignSelf: 'end' } }, exportar)),
     total, tabela];
 }
 
@@ -116,9 +129,14 @@ export async function telaRecebidosDono({ subtitulo }) {
   };
   const total = h('p', { class: 'resumo' });
   const lista = h('div', { class: 'bloco rolagem' });
+  let ultimos = [];
+  const exportar = h('button', { onclick: () => exportarPlanilha('fora-do-caixa-' + hojeIso(), ['Data', 'Tipo', 'Empresa', 'Cliente / favorecido', 'O que foi', 'Quem recebeu / pagou', 'Forma', 'Valor (R$)', 'Observações', 'Situação'],
+    ultimos.map((x) => [data(x.data), TIPOS_FORA[x.tipo].curto, app.nomeEmpresa(x.empresaId), x.cliente, x.descricao, x.recebidoPor, FORMAS_RECEBIMENTO[x.formaRecebimento] || x.formaRecebimento,
+      reaisPlanilha(x.tipo === 'SAIDA' ? -x.valorCentavos : x.valorCentavos), x.observacoes, x.status === 'CANCELADO' ? 'Cancelado' : 'Ativo'])) }, 'Exportar para Excel');
   const carregar = async () => {
     const r = await api('recebidosDono.listar', { tipo: filtro.tipo.value || undefined, empresaId: filtro.empresa.value || undefined, de: filtro.de.value || undefined,
       ate: filtro.ate.value || undefined, busca: filtro.busca.value.trim() || undefined, incluirCancelados: filtro.cancelados.checked });
+    ultimos = r.itens;
     limpar(total, h('span', null, r.quantidade + (r.quantidade === 1 ? ' registro · ' : ' registros · '),
       'Entradas ', h('b', null, reais(r.totalCentavos)), ' · Saídas ', h('b', null, reais(r.totalSaidasCentavos || 0))));
     limpar(lista, !r.itens.length ? h('div', { class: 'vazio' }, 'Nenhum registro com esses filtros.') : h('table', { class: 'tabela' },
@@ -152,7 +170,8 @@ export async function telaRecebidosDono({ subtitulo }) {
       h('label', { class: 'campo busca' }, 'Buscar', filtro.busca),
       h('label', { class: 'campo' }, 'Tipo', filtro.tipo),
       h('label', { class: 'campo' }, 'Empresa', filtro.empresa), h('label', { class: 'campo' }, 'De', filtro.de),
-      h('label', { class: 'campo' }, 'Até', filtro.ate), h('label', { class: 'check' }, filtro.cancelados, 'Mostrar cancelados')),
+      h('label', { class: 'campo' }, 'Até', filtro.ate), h('label', { class: 'check' }, filtro.cancelados, 'Mostrar cancelados'),
+      h('div', { class: 'acoes', style: { alignSelf: 'end' } }, exportar)),
     total, lista];
 }
 
@@ -214,8 +233,15 @@ export async function telaRecorrentes({ subtitulo }) {
   const fin = app.tem('FINANCEIRO');
   const encerradas = h('input', { type: 'checkbox' });
   const tabela = h('div', { class: 'bloco rolagem' });
-  const carregar = async () => {
-    const lista = await api('recorrencias.listar', { incluirEncerradas: encerradas.checked });
+  let todas = []; let textoBusca = '';
+  const busca = buscaLocal('Fornecedor, descrição ou valor', (b) => { textoBusca = b; carregar(true); });
+  const filtradas = () => todas.filter((r) => bateBusca(textoBusca, r.fornecedorNome, r.descricao, app.nomeEmpresa(r.empresaId), r.valorCentavos));
+  const exportar = h('button', { onclick: () => exportarPlanilha('recorrentes-' + hojeIso(), ['Fornecedor', 'Descrição', 'Empresa', 'Repete', 'Valor (R$)', 'Tipo de valor', 'Próximo vencimento', 'Termina em', 'Situação'],
+    filtradas().map((r) => [r.fornecedorNome, r.descricao, app.nomeEmpresa(r.empresaId), PERIODO[r.periodicidade], reaisPlanilha(r.valorCentavos), r.valorTipo === 'ESTIMADO' ? 'Estimado' : 'Fixo',
+      r.ativo ? data(r.proximoVencimento) : '', data(r.termino), r.ativo ? 'Ativa' : 'Encerrada'])) }, 'Exportar para Excel');
+  const carregar = async (soFiltrar) => {
+    if (soFiltrar !== true) todas = await api('recorrencias.listar', { incluirEncerradas: encerradas.checked });
+    const lista = filtradas();
     subtitulo('Cada conta é criada sozinha, como "Prevista", alguns dias antes do vencimento.');
     limpar(tabela, !lista.length ? h('div', { class: 'vazio' }, 'Nenhuma conta recorrente.', fin ? h('p', { class: 'pequeno' }, 'Para criar, use "+ Nova conta" em Contas a pagar e escolha "Repete todo mês/semana".') : null)
       : h('table', { class: 'tabela' },
@@ -240,7 +266,8 @@ export async function telaRecorrentes({ subtitulo }) {
   await carregar();
   return [h('div', { class: 'acoes' }, h('button', { class: 'discreto', onclick: () => app.navegar('contas') }, '← Voltar para Contas a pagar'),
     fin ? h('button', { class: 'primario', onclick: () => app.navegar('lancar') }, 'Nova conta recorrente') : null,
-    h('label', { class: 'check' }, encerradas, 'Mostrar encerradas')), tabela];
+    h('label', { class: 'check' }, encerradas, 'Mostrar encerradas')),
+    h('div', { class: 'bloco filtros' }, h('label', { class: 'campo busca' }, 'Buscar', busca), h('div', { class: 'acoes', style: { alignSelf: 'end' } }, exportar)), tabela];
 }
 
 function alterarRecorrencia(r, depois) {
@@ -269,8 +296,12 @@ export async function telaFornecedores({ subtitulo }) {
   subtitulo('Cadastre os fornecedores frequentes: o nome aparece como sugestão ao lançar e solicitar contas.');
   const busca = h('input', { type: 'search', placeholder: 'Buscar fornecedor' });
   const tabela = h('div', { class: 'bloco rolagem' });
+  let ultimos = [];
+  const exportar = h('button', { onclick: () => exportarPlanilha('fornecedores-' + hojeIso(), ['Nome', 'CPF/CNPJ', 'Categoria de costume', 'Dados para pagamento'],
+    ultimos.map((f) => { const c = app.cad.categorias.find((x) => x.codigo === f.categoriaCodigo); return [f.nome, formatarDocumento(f.documento), c ? c.codigo + ' ' + c.nome : '', f.dadosPagamento || '']; })) }, 'Exportar para Excel');
   const carregar = async () => {
     const lista = await api('fornecedores.listar', { busca: busca.value.trim() || undefined });
+    ultimos = lista;
     limpar(tabela, !lista.length ? h('div', { class: 'vazio' }, 'Nenhum fornecedor cadastrado.') : h('table', { class: 'tabela' },
       h('thead', null, h('tr', null, h('th', null, 'Nome'), h('th', null, 'CPF/CNPJ'), h('th', null, 'Dados para pagamento'), h('th', null, ''))),
       h('tbody', null, lista.map((f) => h('tr', null, h('td', null, f.nome), h('td', { class: 'num' }, formatarDocumento(f.documento)),
@@ -279,7 +310,7 @@ export async function telaFornecedores({ subtitulo }) {
   let espera;
   busca.addEventListener('input', () => { clearTimeout(espera); espera = setTimeout(carregar, 300); });
   await carregar();
-  return [h('div', { class: 'acoes' }, h('button', { class: 'primario', onclick: () => formFornecedor(null, carregar) }, 'Novo fornecedor'), h('div', { style: { flex: '1 1 260px' } }, busca)), tabela];
+  return [h('div', { class: 'acoes' }, h('button', { class: 'primario', onclick: () => formFornecedor(null, carregar) }, 'Novo fornecedor'), h('div', { style: { flex: '1 1 260px' } }, busca), exportar), tabela];
 }
 
 function formatarDocumento(d) {
