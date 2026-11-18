@@ -7,7 +7,7 @@ import { baixarCsv } from './telas-relatorios.js';
 import { app } from './app.js';
 import {
   h, limpar, reais, data, dataHora, hojeIso, trilho, statusEl, toast, dialogo, pedirMotivo, comBotao,
-  lerArquivo, campoValor, opcoes, FORMAS, ROTULO_STATUS, exportarPlanilha, reaisPlanilha, buscaLocal, bateBusca,
+  lerArquivo, campoValor, opcoes, FORMAS, ROTULO_STATUS, exportarPlanilha, reaisPlanilha, buscaLocal, bateBusca, fixarFiltros, perguntarFormato, lerCsv, exportarPdf,
 } from './ui.js';
 
 // ---------------------------------------------------------------------------
@@ -77,10 +77,13 @@ function comBuscaEExportar(itens, nomeArquivo, desenhar) {
   const area = h('div');
   let filtrados = itens;
   const busca = buscaLocal('Fornecedor, descrição, observação, valor ou nº', (b) => { filtrados = itens.filter((c) => buscaConta(b, c)); limpar(area, desenhar(filtrados)); });
-  const exportar = h('button', { onclick: () => exportarPlanilha(nomeArquivo + '-' + hojeIso(), CABECALHO_CONTAS, filtrados.map(linhaPlanilhaConta)) }, 'Exportar para Excel');
-  const filtrar = h('button', { class: 'primario', onclick: () => { filtrados = itens.filter((c) => buscaConta(busca.value, c)); limpar(area, desenhar(filtrados)); } }, 'Filtrar');
-  limpar(area, desenhar(itens));
-  return [h('div', { class: 'bloco filtros' }, h('label', { class: 'campo busca' }, 'Buscar', busca), h('div', { class: 'acoes', style: { alignSelf: 'end' } }, filtrar, exportar)), area];
+  const fixo = fixarFiltros('lista:' + nomeArquivo, { busca });
+  const aplicar = () => { filtrados = itens.filter((c) => buscaConta(busca.value, c)); limpar(area, desenhar(filtrados)); };
+  const exportar = h('button', { onclick: () => exportarPlanilha(nomeArquivo + '-' + hojeIso(), CABECALHO_CONTAS, filtrados.map(linhaPlanilhaConta), { totais: true }) }, 'Exportar (Excel ou PDF)');
+  const filtrar = h('button', { class: 'primario', onclick: aplicar }, 'Filtrar');
+  const limparF = h('button', { class: 'discreto', onclick: () => { fixo.limpar(); aplicar(); } }, 'Limpar filtros');
+  aplicar();
+  return [h('div', { class: 'bloco filtros' }, h('label', { class: 'campo busca' }, 'Buscar', busca), h('div', { class: 'acoes', style: { alignSelf: 'end' } }, filtrar, limparF, exportar)), area];
 }
 
 /** Pergunta por qual conta bancária pagar as contas que ainda não têm (uma escolha por empresa). */
@@ -244,7 +247,7 @@ export async function telaMinhas({ subtitulo }) {
   };
   const lista = h('div');
   let ultimas = [];
-  const exportar = h('button', { onclick: () => exportarPlanilha('minhas-solicitacoes-' + hojeIso(), CABECALHO_CONTAS, ultimas.map(linhaPlanilhaConta)) }, 'Exportar para Excel');
+  const exportar = h('button', { onclick: () => exportarPlanilha('minhas-solicitacoes-' + hojeIso(), CABECALHO_CONTAS, ultimas.map(linhaPlanilhaConta)) }, 'Exportar (Excel ou PDF)');
   const carregarSeq = {};
   const carregar = async () => {
     const texto = f.texto.value.trim();
@@ -261,6 +264,7 @@ export async function telaMinhas({ subtitulo }) {
   let espera;
   [f.texto, f.valor].forEach((el) => el.addEventListener('input', () => { clearTimeout(espera); espera = setTimeout(carregar, 400); }));
   [f.de, f.ate].forEach((el) => el.addEventListener('change', carregar));
+  const fixoMinhas = fixarFiltros('minhas', f);
   await carregar();
   return [
     h('div', { class: 'acoes' }, h('button', { class: 'primario', onclick: () => app.navegar('nova-solicitacao') }, 'Nova solicitação')),
@@ -269,7 +273,8 @@ export async function telaMinhas({ subtitulo }) {
       h('label', { class: 'campo' }, 'Valor exato (R$)', f.valor),
       h('label', { class: 'campo' }, 'Vencimento de', f.de),
       h('label', { class: 'campo' }, 'até', f.ate),
-      h('div', { class: 'acoes', style: { alignSelf: 'end' } }, h('button', { class: 'primario', onclick: () => carregar() }, 'Filtrar'), exportar)),
+      h('div', { class: 'acoes', style: { alignSelf: 'end' } }, h('button', { class: 'primario', onclick: () => carregar() }, 'Filtrar'),
+        h('button', { class: 'discreto', onclick: () => { fixoMinhas.limpar(); carregar(); } }, 'Limpar filtros'), exportar)),
     lista,
   ];
 }
@@ -352,8 +357,12 @@ export async function telaTodas({ subtitulo }) {
     clearTimeout(espera); espera = setTimeout(() => carregar(true), el.type === 'search' ? 500 : 0);
   }));
   soVencidas.addEventListener('change', () => carregar(true));
+  const veioDoPainel = soVencidas.checked;
+  soVencidas.checked = false;
+  const fixoTodas = fixarFiltros('todas', Object.assign({ soVencidas }, f));
+  if (veioDoPainel) { fixoTodas.limpar(); soVencidas.checked = true; fixoTodas.salvar(); }
   const filtrar = h('button', { class: 'primario', onclick: () => comBotao(filtrar, () => { clearTimeout(espera); return carregar(true); }) }, 'Filtrar');
-  const limparFiltros = h('button', { class: 'discreto', onclick: () => { Object.values(f).forEach((el) => { el.value = ''; }); soVencidas.checked = false; carregar(true); } }, 'Limpar');
+  const limparFiltros = h('button', { class: 'discreto', onclick: () => { fixoTodas.limpar(); carregar(true); } }, 'Limpar filtros');
   mais.onclick = () => comBotao(mais, () => { pagina++; return carregar(); });
   const exportar = h('button', { onclick: () => comBotao(exportar, async () => {
     try {
@@ -362,10 +371,18 @@ export async function telaTodas({ subtitulo }) {
         vencimentoDe: f.de.value || undefined, vencimentoAte: f.ate.value || undefined,
         fornecedor: f.fornecedor.value.trim() || undefined, descricao: f.descricao.value.trim() || undefined,
       });
-      baixarCsv(r.nomeArquivo, r.conteudo);
+      const formato = await perguntarFormato(r.linhas);
+      if (!formato) return;
+      if (formato === 'PDF') {
+        const tabela = lerCsv(r.conteudo);
+        const cab = tabela[0] || [];
+        const numericas = cab.map((c) => /\(R\$\)/.test(c));
+        await exportarPdf(r.nomeArquivo.replace(/\.csv$/i, ''), cab, tabela.slice(1).map((l) => l.map((v, i) => (numericas[i] && v !== '' && !isNaN(Number(String(v).replace(/\./g, '').replace(',', '.'))) ? Number(String(v).replace(/\./g, '').replace(',', '.')) : v))),
+          { titulo: 'Contas a pagar', totais: true });
+      } else baixarCsv(r.nomeArquivo, r.conteudo);
       toast(r.linhas + (r.linhas === 1 ? ' conta exportada.' : ' contas exportadas.') + ' A exportação fica registrada no histórico.');
     } catch (e) { toast(e.message, { tipo: 'erro' }); }
-  }) }, 'Exportar para Excel');
+  }) }, 'Exportar (Excel ou PDF)');
   await carregar(true);
   const recorrentes = h('button', { onclick: () => app.navegar('recorrentes') }, 'Gerenciar recorrentes');
   return [
@@ -741,6 +758,7 @@ function desenharDetalhe(d, topo, corpo) {
   const final = ['PAGO', 'RECUSADO', 'CANCELADO'].includes(c.status);
   const podeEditar = !final && (app.tem('FINANCEIRO') || (c.status === 'SOLICITADO' && app.tem('GERENTE')));
   if (podeEditar) botoesAcao.push(h('button', { class: 'discreto', onclick: () => formEditar(c, areaAcao, recarregar) }, 'Editar dados'));
+  if (d.podeCorrigirPaga) botoesAcao.push(h('button', { class: 'discreto', onclick: () => formCorrigirPaga(c, d.pagaPeloExtrato, areaAcao, recarregar) }, 'Corrigir pagamento'));
   if (c.status === 'PAGO' && c.origem !== 'ESTORNO' && app.tem('FINANCEIRO')) {
     botoesAcao.push(h('button', { class: 'discreto', onclick: () => formEstorno(c, recarregar) }, 'Registrar estorno'));
   }
@@ -1023,6 +1041,55 @@ function formEditar(c, area, recarregar) {
         h('label', { class: 'campo' }, 'Documento', f.documentoNumero)],
       h('label', { class: 'campo largo' }, 'Observações', f.observacoes),
       lancada && !soObs ? h('label', { class: 'campo largo' }, 'Justificativa', h('span', { class: 'dica' }, 'Obrigatória para mudar fornecedor, valor ou vencimento depois do lançamento.'), motivo) : null),
+    h('div', { class: 'acoes fim', style: { marginTop: '12px' } }, h('button', { onclick: () => limpar(area) }, 'Fechar'), botao)));
+}
+
+/** Conta paga, conciliação do dia ainda aberta: o financeiro corrige (com motivo). Baixa que veio do extrato: valor, data e conta não mudam. */
+function formCorrigirPaga(c, peloExtrato, area, recarregar) {
+  const f = {
+    fornecedorNome: h('input', { value: c.fornecedorNome, maxlength: 120 }),
+    descricao: h('input', { value: c.descricao, maxlength: 300 }),
+    documentoNumero: h('input', { value: c.documentoNumero || '', maxlength: 60 }),
+    categoria: h('select', null, opcoesCategorias(c.empresaId, c.categoriaId)),
+    conta: h('select', null, selectContasBancarias(c.empresaId, c.contaBancariaId)),
+    dataPagamento: h('input', { type: 'date', value: c.dataPagamento, max: hojeIso() }),
+    valor: campoValor(),
+    observacoes: h('textarea', { maxlength: 500 }),
+  };
+  f.observacoes.value = c.observacoes || '';
+  f.valor.centavos = c.valorCentavos;
+  if (peloExtrato) [f.conta, f.dataPagamento, f.valor].forEach((el) => { el.disabled = true; });
+  const motivo = h('textarea', { maxlength: 500, placeholder: 'O que estava errado (fica no histórico)' });
+  const botao = h('button', { class: 'primario' }, 'Salvar correção');
+  botao.onclick = () => comBotao(botao, async () => {
+    const campos = {};
+    ['fornecedorNome', 'descricao', 'documentoNumero'].forEach((k) => { if (f[k].value.trim() !== (c[k] || '')) campos[k] = f[k].value.trim(); });
+    if (f.categoria.value !== (c.categoriaId || '')) campos.categoriaId = f.categoria.value;
+    if (f.observacoes.value.trim() !== (c.observacoes || '')) campos.observacoes = f.observacoes.value.trim();
+    if (!peloExtrato) {
+      if (f.conta.value !== (c.contaBancariaId || '')) campos.contaBancariaId = f.conta.value;
+      if (f.dataPagamento.value !== c.dataPagamento) campos.dataPagamento = f.dataPagamento.value;
+      if (f.valor.centavos !== c.valorCentavos) campos.valorCentavos = f.valor.centavos;
+    }
+    if (!Object.keys(campos).length) { toast('Nada mudou.'); return; }
+    if (motivo.value.trim().length < 5) { toast('Escreva o motivo da correção.', { tipo: 'erro' }); return; }
+    try {
+      await api('contas.editar', { contaId: c.id, versao: c.versao, campos, motivo: motivo.value.trim() });
+      toast('Pagamento corrigido.');
+      recarregar();
+    } catch (e) { toast(e.message, { tipo: 'erro', duracao: 9000 }); }
+  });
+  limpar(area, h('div', { class: 'bloco acao-aberta' }, h('h3', null, 'Corrigir pagamento'),
+    h('p', { class: 'secundario pequeno' }, peloExtrato
+      ? 'Este pagamento foi conferido no extrato: valor, data e conta seguem o banco. Se a baixa está errada, use "Excluir (lançamento errado ou duplicado)".'
+      : 'Dá para corrigir até a conciliação deste dia ser fechada. Depois, só o administrador reabrindo.'),
+    h('div', { class: 'grade-campos', style: { marginTop: '12px' } },
+      h('label', { class: 'campo' }, 'Fornecedor', f.fornecedorNome), h('label', { class: 'campo' }, 'Descrição', f.descricao),
+      h('label', { class: 'campo' }, 'Categoria', f.categoria), h('label', { class: 'campo' }, 'Documento', f.documentoNumero),
+      h('label', { class: 'campo' }, 'Pago pela conta', f.conta), h('label', { class: 'campo' }, 'Data do pagamento', f.dataPagamento),
+      h('label', { class: 'campo' }, 'Valor pago (R$)', f.valor),
+      h('label', { class: 'campo largo' }, 'Observações', f.observacoes),
+      h('label', { class: 'campo largo' }, 'Motivo da correção', motivo)),
     h('div', { class: 'acoes fim', style: { marginTop: '12px' } }, h('button', { onclick: () => limpar(area) }, 'Fechar'), botao)));
 }
 

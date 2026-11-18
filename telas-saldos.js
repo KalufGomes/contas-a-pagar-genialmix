@@ -8,6 +8,7 @@ import { api } from './api.js';
 import { app } from './app.js';
 import { h, limpar, reais, data, hojeIso, toast, dialogo, comBotao, campoValor, opcoes, exportarPlanilha, reaisPlanilha, FORMAS } from './ui.js';
 import { opcoesCategorias, rotuloContaBancaria } from './telas-contas.js';
+import { avisoConferencia } from './telas-conciliacao.js';
 
 const NOME_TIPO = { BANCO: 'Banco', CAIXA: 'Caixa (dinheiro)', PESSOA_FISICA: 'Pessoa física do dono', APLICACAO: 'Aplicação' };
 const ontem = () => { const d = new Date(hojeIso() + 'T12:00:00'); d.setDate(d.getDate() - 1); return d.toISOString().slice(0, 10); };
@@ -31,12 +32,15 @@ export async function telaSaldos({ subtitulo }) {
         h('div', { class: 'fechamento' },
           h('h2', null, e.nome, ' ', h('span', { class: 'secundario pequeno' }, '· total ', reais(total))),
           blocoFechamento(e, fech, fin, carregar)),
-        h('div', { class: 'saldos-grade' }, contas.map((c) => h('button', { type: 'button', class: 'saldo-cartao', onclick: () => abrirExtrato(c) },
-          h('span', { class: 'secundario pequeno' }, NOME_TIPO[c.tipo] || c.tipo),
-          h('b', null, c.apelido),
-          h('span', { class: 'valor' + (c.saldoCentavos < 0 ? ' negativo' : '') }, reais(c.saldoCentavos)),
-          h('span', { class: 'secundario pequeno' }, !c.temSaldoInicial ? '⚠ sem saldo inicial (peça ao administrador)' : (c.ate ? 'até ' + data(c.ate) : 'desde ' + data(c.saldoInicialData)) +
-            (c.tipo === 'BANCO' && !c.temExtrato ? ' · ainda sem extrato' : ''))))),
+        h('div', { class: 'saldos-grade' }, contas.map((c) => h('div', { class: 'saldo-cartao' },
+          h('button', { type: 'button', class: 'saldo-abrir', onclick: () => abrirExtrato(c) },
+            h('span', { class: 'secundario pequeno' }, NOME_TIPO[c.tipo] || c.tipo),
+            h('b', null, c.apelido),
+            h('span', { class: 'valor' + (c.saldoCentavos < 0 ? ' negativo' : '') }, reais(c.saldoCentavos)),
+            h('span', { class: 'secundario pequeno' }, !c.temSaldoInicial ? '⚠ sem saldo inicial (peça ao administrador)' : (c.ate ? 'até ' + data(c.ate) : 'desde ' + data(c.saldoInicialData)) +
+              (c.tipo === 'BANCO' && !c.temExtrato ? ' · ainda sem extrato' : ''))),
+          seloConferencia(c.conferencia),
+          (fin || app.tem('GESTOR')) && c.temSaldoInicial ? h('button', { class: 'discreto pequeno', onclick: () => conferirComBanco(c, carregar) }, 'Conferir com o banco') : null))),
         h('p', { class: 'secundario pequeno', style: { marginTop: '10px' } }, futuro
           ? ['Saldo futuro: ', h('b', null, reais(futuro.valorCentavos)), futuro.data ? ' em ' + data(futuro.data) : '', futuro.descricao ? ' · ' + futuro.descricao : '', ' (' + futuro.informadoPor + ')']
           : 'Saldo futuro ainda não informado.',
@@ -53,6 +57,33 @@ export async function telaSaldos({ subtitulo }) {
       h('label', { class: 'campo', style: { minWidth: '220px' } }, 'Empresa', filtroEmpresa)),
     area,
   ];
+}
+
+function seloConferencia(cf) {
+  if (!cf) return h('span', { class: 'secundario pequeno' }, 'Ainda não conferido com o banco.');
+  if (cf.saldoSistemaCentavos === null) return null;
+  if (cf.bate) return h('span', { class: 'pequeno', style: { color: '#1F5E3C' } }, '✅ Bate com o banco em ' + data(cf.data));
+  return h('span', { class: 'pequeno', style: { color: '#B42318' } }, '⚠️ Não bate em ' + data(cf.data) + ': banco ' + reais(cf.saldoBancoCentavos) + ', diferença ' + reais(cf.diferencaCentavos));
+}
+
+/** O financeiro digita o saldo que o banco mostra numa data e vê na hora se bate. */
+function conferirComBanco(conta, depois) {
+  return dialogo((fechar) => {
+    const dataEl = h('input', { type: 'date', value: ontem(), max: hojeIso(), min: conta.saldoInicialData || undefined });
+    const valor = campoValor({ placeholder: 'Saldo no fim do dia (use - se negativo)' }, true);
+    const resultado = h('div');
+    const erro = h('p', { class: 'mensagem erro', hidden: true });
+    const botao = h('button', { class: 'primario' }, 'Comparar');
+    botao.onclick = () => comBotao(botao, async () => {
+      erro.hidden = true;
+      if (valor.centavos === null || !valor.value.trim()) { erro.textContent = 'Informe o saldo do banco.'; erro.hidden = false; return; }
+      try { limpar(resultado, avisoConferencia(await api('saldos.conferir', { contaBancariaId: conta.id, data: dataEl.value, saldoBancoCentavos: valor.centavos }))); depois(); } catch (e) { erro.textContent = e.message; erro.hidden = false; }
+    });
+    return [h('h2', null, 'Conferir com o banco · ' + conta.apelido),
+      h('p', { class: 'secundario pequeno' }, 'Olhe no app do banco o saldo no FIM do dia escolhido. Importando o extrato em OFX, essa conferência é feita sozinha.'),
+      h('div', { class: 'grade-campos' }, h('label', { class: 'campo' }, 'Dia', dataEl), h('label', { class: 'campo' }, 'Saldo no banco (R$)', valor)),
+      erro, resultado, h('div', { class: 'acoes fim' }, h('button', { onclick: () => fechar(false) }, 'Fechar'), botao)];
+  });
 }
 
 function blocoFechamento(e, fech, fin, depois) {
@@ -99,7 +130,7 @@ async function abrirExtrato(conta) {
       h('div', { class: 'acoes' }, h('label', { class: 'campo' }, 'De', de), h('label', { class: 'campo' }, 'Até', ate),
         h('button', { class: 'primario', style: { alignSelf: 'end' }, onclick: carregar }, 'Filtrar'),
         h('button', { style: { alignSelf: 'end' }, onclick: () => ultimo && exportarPlanilha('extrato-' + conta.apelido + '-' + hojeIso(), ['Data', 'Descrição', 'Valor (R$)', 'Saldo (R$)'],
-          ultimo.itens.map((x) => [data(x.data), x.descricao, reaisPlanilha(x.valor), reaisPlanilha(x.saldoCentavos)])) }, 'Exportar para Excel')),
+          ultimo.itens.map((x) => [data(x.data), x.descricao, reaisPlanilha(x.valor), reaisPlanilha(x.saldoCentavos)])) }, 'Exportar (Excel ou PDF)')),
       corpo, h('div', { class: 'acoes fim' }, h('button', { onclick: () => fechar() }, 'Fechar'))];
   });
 }

@@ -4,7 +4,7 @@
  */
 import { api } from './api.js';
 import { app } from './app.js';
-import { h, limpar, reais, data, hojeIso, toast, comBotao, opcoes, dialogo, campoValor, exportarPlanilha, reaisPlanilha } from './ui.js';
+import { h, limpar, reais, data, hojeIso, toast, comBotao, opcoes, dialogo, campoValor, exportarPlanilha, reaisPlanilha, fixarFiltros, perguntarFormato, lerCsv, exportarPdf } from './ui.js';
 import { linhaConta } from './telas-contas.js';
 
 const COR_ENTRADAS = '#B8893F';
@@ -54,14 +54,17 @@ export async function telaPainel({ subtitulo }) {
       limpar(corpo, conteudoPainel(p, atual));
     } catch (e) { toast(e.message, { tipo: 'erro' }); } finally { corpo.classList.remove('recarregando'); }
   };
+  const fixoPainel = fixarFiltros('painel', { empresa, mes, de, ate });
+  blocoPeriodo.hidden = mes.value !== 'periodo';
   mes.addEventListener('change', () => { blocoPeriodo.hidden = mes.value !== 'periodo'; if (mes.value !== 'periodo') carregar(); });
   empresa.addEventListener('change', () => { carregar(); if (gestor) areaFluxo.recarregar(); });
   const filtrar = h('button', { class: 'primario', style: { alignSelf: 'end' }, onclick: () => { carregar(); if (gestor) areaFluxo.recarregar(); } }, 'Filtrar');
+  const limparPainel = h('button', { class: 'discreto', style: { alignSelf: 'end' }, onclick: () => { fixoPainel.limpar(); blocoPeriodo.hidden = true; carregar(); if (gestor) areaFluxo.recarregar(); } }, 'Limpar filtros');
   await carregar();
   if (gestor) await montarFluxo(areaFluxo, empresa);
   return [h('div', { class: 'filtros' },
     h('label', { class: 'campo', style: { maxWidth: '320px' } }, 'Empresa', empresa),
-    h('label', { class: 'campo' }, 'Período', mes), blocoPeriodo, filtrar), corpo, areaFluxo];
+    h('label', { class: 'campo' }, 'Período', mes), blocoPeriodo, filtrar, limparPainel), corpo, areaFluxo];
 }
 
 function nomeMesLongo(m) {
@@ -110,7 +113,7 @@ async function montarFluxo(area, empresa) {
   area.recarregar = carregar;
   ano.addEventListener('change', carregar);
   comPct.addEventListener('change', () => ultimo && limpar(tabela, tabelaFluxo(ultimo, comPct.checked)));
-  const exportar = h('button', { onclick: () => ultimo && exportarFluxo(ultimo) }, 'Exportar para Excel');
+  const exportar = h('button', { onclick: () => ultimo && exportarFluxo(ultimo) }, 'Exportar (Excel ou PDF)');
   const faturamento = h('button', { onclick: () => informarFaturamento(empresa.value, carregar) }, 'Informar faturamento');
   limpar(area, h('section', { class: 'bloco' },
     h('div', { class: 'fechamento' }, h('h2', null, 'Fluxo de caixa'),
@@ -150,7 +153,7 @@ function exportarFluxo(f) {
     ? [l.rotulo].concat(l.valores.map((v) => (v === null ? '' : Number((v * 100).toFixed(1)))), [''])
     : [l.rotulo].concat(l.valores.map(reaisPlanilha), [reaisPlanilha(l.total !== undefined ? l.total : l.valores.reduce((a, b) => a + b, 0))]));
   (f.faturamentoPorPlataforma || []).forEach((p) => linhas.push(['Faturamento · ' + p.plataforma].concat(p.valores.map(reaisPlanilha), [reaisPlanilha(p.total)])));
-  exportarPlanilha('fluxo-caixa-' + f.ano + '-' + f.empresa, cab, linhas);
+  exportarPlanilha('fluxo-caixa-' + f.ano + '-' + f.empresa, cab, linhas, { titulo: 'Fluxo de caixa ' + f.ano + ' · ' + f.empresa, paisagem: true });
 }
 
 async function informarFaturamento(empresaPadrao, depois) {
@@ -334,6 +337,7 @@ export async function telaDre({ subtitulo }) {
     ate: h('input', { type: 'month', value: mesAtual(), max: mesAtual() }),
     detalhe: h('input', { type: 'checkbox', checked: true }),
   };
+  const fixoDre = fixarFiltros('dre', f);
   const area = h('div');
   let ultimo = null;
   const carregar = async () => {
@@ -348,10 +352,20 @@ export async function telaDre({ subtitulo }) {
   const exportar = h('button', { onclick: () => comBotao(exportar, async () => {
     try {
       const r = await api('relatorios.exportarDre', { empresaId: f.empresa.value || undefined, de: f.de.value, ate: f.ate.value });
-      baixarCsv(r.nomeArquivo, r.conteudo);
+      const formato = await perguntarFormato();
+      if (!formato) return;
+      if (formato === 'PDF') {
+        const t = lerCsv(r.conteudo);
+        const paraNumero = (x) => { const n = Number(String(x).replace(/\./g, '').replace(',', '.')); return x !== '' && !isNaN(n) ? n : x; };
+        const iCab = Math.max(0, t.findIndex((l) => l[0] === 'Linha'));
+        const cab = t[iCab];
+        await exportarPdf('dre-' + f.de.value + '-a-' + f.ate.value, cab.map((c, i) => (i ? c + ' (R$)' : c)),
+          t.slice(iCab + 1).map((l) => cab.map((_, i) => (i ? paraNumero(l[i] === undefined ? '' : l[i]) : l[0]))),
+          { titulo: 'DRE gerencial (regime de caixa)', subtitulo: (f.empresa.value ? app.nomeEmpresa(f.empresa.value) : 'Todas as empresas') + ' · ' + f.de.value + ' a ' + f.ate.value });
+      } else baixarCsv(r.nomeArquivo, r.conteudo);
       toast('DRE exportada. A exportação fica registrada no histórico.');
     } catch (e) { toast(e.message, { tipo: 'erro' }); }
-  }) }, 'Exportar para Excel');
+  }) }, 'Exportar (Excel ou PDF)');
   await carregar();
   return [
     h('div', { class: 'bloco filtros' },
@@ -359,7 +373,8 @@ export async function telaDre({ subtitulo }) {
       h('label', { class: 'campo' }, 'De', f.de),
       h('label', { class: 'campo' }, 'Até', f.ate),
       h('label', { class: 'check', style: { alignSelf: 'center' } }, f.detalhe, 'Mostrar categorias'),
-      h('div', { class: 'acoes', style: { alignSelf: 'end' } }, h('button', { class: 'primario', onclick: () => carregar() }, 'Filtrar'), exportar)),
+      h('div', { class: 'acoes', style: { alignSelf: 'end' } }, h('button', { class: 'primario', onclick: () => carregar() }, 'Filtrar'),
+        h('button', { class: 'discreto', onclick: () => { fixoDre.limpar(); carregar(); } }, 'Limpar filtros'), exportar)),
     area,
   ];
 }

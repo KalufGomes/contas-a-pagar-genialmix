@@ -85,8 +85,12 @@ export function lerOfx(texto) {
     };
   }).filter((m) => m.data && m.valorCentavos);
   const datas = movs.map((m) => m.data).sort();
+  // Saldo que o banco informa (LEDGERBAL): serve para conferir se o saldo do sistema bate.
+  const blocoSaldo = (texto.match(/<LEDGERBAL>[\s\S]*?(<\/LEDGERBAL>|(?=<AVAILBAL>)|(?=<\/STMTRS>))/i) || [''])[0];
+  const saldoBanco = blocoSaldo && tag(blocoSaldo, 'BALAMT') !== '' && dataIso(tag(blocoSaldo, 'DTASOF'))
+    ? { valorCentavos: centavosDe(tag(blocoSaldo, 'BALAMT')), data: dataIso(tag(blocoSaldo, 'DTASOF')) } : null;
   return { formato: 'OFX', banco, contaFinal: finalDaConta(conta), periodoDe: dataIso(tag(texto, 'DTSTART')) || datas[0] || '',
-    periodoAte: dataIso(tag(texto, 'DTEND')) || datas[datas.length - 1] || '', movimentos: numerar(movs) };
+    periodoAte: dataIso(tag(texto, 'DTEND')) || datas[datas.length - 1] || '', movimentos: numerar(movs), saldoBanco };
 }
 
 // ---------------------------------------------------------------------------

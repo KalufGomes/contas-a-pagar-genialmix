@@ -14,10 +14,11 @@ import * as rel from './telas-relatorios.js';
 import { telaImportar } from './telas-importacao.js';
 import { telaConciliacao, telaHolerites } from './telas-conciliacao.js';
 import { telaSaldos } from './telas-saldos.js';
+import { telaRelatorios } from './telas-relatorios-extras.js';
 import { ativarPush, situacaoPush } from './push.js';
 
 /** Mostrada no rodapé: confirma que o aparelho está com as telas novas. */
-const VERSAO_TELA = '0.11.0';
+const VERSAO_TELA = '0.12.0';
 
 const raiz = document.getElementById('app');
 
@@ -62,6 +63,7 @@ const ROTAS = [
   { id: 'painel', titulo: 'Painel', perfis: ['FINANCEIRO', 'APROVADOR', 'GESTOR'], icone: 'grafico', tela: rel.telaPainel },
   { id: 'dre', titulo: 'DRE gerencial', curto: 'DRE', perfis: ['GESTOR'], icone: 'tabela', tela: rel.telaDre },
   { id: 'receitas', titulo: 'Receitas', perfis: ['FINANCEIRO', 'APROVADOR', 'GESTOR'], icone: 'entrada', tela: fin.telaReceitas },
+  { id: 'relatorios', titulo: 'Relatórios', perfis: ['FINANCEIRO', 'APROVADOR', 'GESTOR', 'ADMIN'], icone: 'tabela', tela: telaRelatorios },
   { id: 'saldos', titulo: 'Contas e saldos', curto: 'Saldos', perfis: ['FINANCEIRO', 'APROVADOR', 'GESTOR'], icone: 'carteira', tela: telaSaldos },
   { id: 'recorrentes', titulo: 'Contas recorrentes', perfis: ['FINANCEIRO', 'APROVADOR', 'GESTOR'], oculta: true, pai: 'contas', tela: fin.telaRecorrentes },
   { id: 'fornecedores', titulo: 'Fornecedores', perfis: ['FINANCEIRO'], icone: 'pessoas', tela: fin.telaFornecedores },
@@ -199,6 +201,8 @@ function montarEstrutura() {
     }),
     rotas.length > 5 ? (els.abaMais = h('a', { href: '#/mais' }, icone('lista'), h('span', null, 'Mais'))) : null);
 
+  window.__usuarioNome = sessao.usuario.nome; // aparece no rodapé dos PDFs
+  window.__usuarioId = sessao.usuario.id; // filtros fixos são por pessoa neste aparelho
   limpar(raiz, h('div', { class: 'app' },
     h('aside', { class: 'lateral' },
       placaMarca(), menu,

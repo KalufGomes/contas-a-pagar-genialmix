@@ -439,3 +439,19 @@ table.dre td:first-child { white-space: nowrap; }
 .fechamento .acoes button { flex: 0 0 auto; }
 .saldo-cartao { justify-items: start; align-content: start; }
 .saldo-cartao > * { justify-self: stretch; text-align: left; }
+.saldo-cartao { cursor: default; }
+.saldo-abrir { all: unset; cursor: pointer; display: grid; gap: 2px; }
+.saldo-abrir:focus-visible { outline: 2px solid var(--ouro, #c9a227); border-radius: 6px; }
+.saldo-cartao button.discreto.pequeno { justify-self: start; padding: 2px 0; font-size: 13px; }
+tr.apagada td { opacity: .55; }
+/* 0.12 — relatórios */
+.abas-relatorio { flex-wrap: wrap; }
+tr.clicavel { cursor: pointer; }
+tr.clicavel:hover td { background: var(--fundo, #f4f5f8); }
+tr.vencida td:first-child { color: #B42318; font-weight: 600; }
+.tabela-conciliacao tr.dia-inicio td { background: #F4F6FA; border-top: 2px solid var(--linha); }
+.tabela-conciliacao tr.dia-fim td { border-bottom: 2px solid var(--marinho, #14213d); }
+.tabela-conciliacao td.forte { font-weight: 700; }
+.tabela-conciliacao td.alerta { color: #9A6B00; font-weight: 600; }
+.tiles { margin-bottom: 12px; }
+.tabela td.num { white-space: nowrap; }

@@ -9,7 +9,7 @@ import { api } from './api.js';
 import { app } from './app.js';
 import {
   h, limpar, reais, data, hojeIso, toast, dialogo, comBotao, campoValor, opcoes,
-  exportarPlanilha, reaisPlanilha, lerPlanilha, lerTextoPdf,
+  exportarPlanilha, reaisPlanilha, lerPlanilha, lerTextoPdf, fixarFiltros,
 } from './ui.js';
 import { opcoesCategorias } from './telas-contas.js';
 import { lerOfx, lerExtratoExcel, lerSoftUp, menosUmMes, lerHolerites, vencimentoDoHolerite, comparavel } from './leitores.js';
@@ -23,9 +23,11 @@ const SITUACAO = {
   LANCADO: { nome: 'Lançado', cor: 'ok' },
   TRANSFERENCIA: { nome: 'Transferência / aplicação', cor: '' },
   IGNORADO: { nome: 'Ignorado', cor: '' },
+  DUPLICADO: { nome: 'Duplicado (já lançado à mão)', cor: '' },
+  EXCLUIDO: { nome: 'Excluído (importado errado)', cor: '' },
 };
 const CLASSIFICACAO = {
-  CONTA_A_PAGAR: 'Conta a pagar', VARIAS_CONTAS: 'Várias contas', SALARIOS: 'Salários (holerites)', DESPESA: 'Despesa',
+  DUPLICADO: 'Já lançado à mão', EXCLUIDO: 'Importado errado', CONTA_A_PAGAR: 'Conta a pagar', VARIAS_CONTAS: 'Várias contas', SALARIOS: 'Salários (holerites)', DESPESA: 'Despesa',
   RECEITA: 'Receita', RECEITA_VENDA: 'Receita de vendas', TRANSFERENCIA: 'Transferência', INVESTIMENTO_OU_OUTRO: 'Ignorado',
   APLICACAO: 'Aplicação', RESGATE: 'Resgate da aplicação', TRANSFERENCIA_CONTA: 'Transferência entre contas',
 };
@@ -77,9 +79,58 @@ async function telaExtratos({ subtitulo }) {
   const atualizarContas = () => limpar(f.conta, opcoes(app.cad.contasBancarias.filter((c) => c.ativo && (!f.empresa.value || c.empresaId === f.empresa.value))
     .map((c) => [c.id, c.apelido + ' · final ' + c.contaFinal]), '', 'Todas'));
   atualizarContas();
+  const fixo = fixarFiltros('extratos', f);
+  atualizarContas(); fixo.restaurar(['conta']);
   const resumo = h('div', { class: 'resumo' });
   const lista = h('div', { class: 'bloco rolagem' });
   let itens = [];
+  // Seleção para excluir em lote (movimento que já foi lançado à mão, ou importado na conta errada)
+  const marcados = new Set();
+  const infoSel = h('span', { class: 'num' });
+  const barraSel = h('div', { class: 'barra-lote', hidden: true }, infoSel,
+    h('button', { class: 'primario perigo', onclick: () => excluirSelecionados() }, 'Excluir selecionados'),
+    h('button', { class: 'discreto', onclick: () => { marcados.clear(); desenhar(); } }, 'Desmarcar'));
+  const atualizarSel = () => {
+    const sel = itens.filter((m) => marcados.has(m.id));
+    infoSel.textContent = sel.length + (sel.length === 1 ? ' selecionado · ' : ' selecionados · ') + reais(sel.reduce((x, m) => x + m.valorCentavos, 0));
+    barraSel.hidden = !sel.length;
+  };
+  const excluivel = (m) => fin && !m.contas.length && m.situacao !== 'DUPLICADO' && m.situacao !== 'EXCLUIDO';
+  const excluirSelecionados = async () => {
+    const ids = [...marcados];
+    const escolha = await dialogo((fechar) => {
+      let tipo = 'DUPLICADO';
+      const motivo = h('textarea', { maxlength: 500, placeholder: 'Ex.: já lançado à mão em 05/11' });
+      const erro = h('p', { class: 'mensagem erro', hidden: true });
+      return [h('h2', null, 'Excluir ' + ids.length + (ids.length === 1 ? ' movimento do extrato' : ' movimentos do extrato')),
+        h('div', { class: 'campo' },
+          h('label', { class: 'check' }, h('input', { type: 'radio', name: 'tipo-exc', checked: true, onchange: () => { tipo = 'DUPLICADO'; } }),
+            h('span', null, h('b', null, 'Já foi lançado à mão'), h('div', { class: 'secundario pequeno' }, 'Sai das pendências e não lança nada. Continua no saldo do banco (o lançamento manual é o que vale nos relatórios).'))),
+          h('label', { class: 'check' }, h('input', { type: 'radio', name: 'tipo-exc', onchange: () => { tipo = 'EXCLUIDO'; } }),
+            h('span', null, h('b', null, 'Importado errado'), h('div', { class: 'secundario pequeno' }, 'Extrato de outra conta ou linha que não aconteceu: sai também do saldo.')))),
+        h('p', { class: 'secundario pequeno' }, 'Se o mesmo extrato for importado de novo, estas linhas não voltam. Dá para restaurar depois (filtro Situação).'),
+        h('label', { class: 'campo' }, 'Motivo', motivo), erro,
+        h('div', { class: 'acoes fim' }, h('button', { onclick: () => fechar(null) }, 'Voltar'),
+          h('button', { class: 'primario perigo', onclick: () => {
+            if (motivo.value.trim().length < 5) { erro.textContent = 'Escreva o motivo (ao menos 5 caracteres).'; erro.hidden = false; return; }
+            fechar({ tipo, motivo: motivo.value.trim() });
+          } }, 'Excluir'))];
+    });
+    if (!escolha) return;
+    try {
+      let feitos = 0; const falhas = [];
+      for (let i = 0; i < ids.length; i += 50) {
+        const r = await api('extratos.excluirMovimentos', { movimentoIds: ids.slice(i, i + 50), tipo: escolha.tipo, motivo: escolha.motivo });
+        feitos += r.excluidos; r.resultados.filter((x) => !x.ok).forEach((x) => falhas.push(x.mensagem));
+      }
+      toast(feitos + (feitos === 1 ? ' movimento excluído.' : ' movimentos excluídos.') + (falhas.length ? ' ' + falhas.length + ' não: ' + falhas[0] : ''), { tipo: falhas.length ? 'erro' : '', duracao: falhas.length ? 12000 : 4000 });
+    } catch (e) { toast(e.message, { tipo: 'erro' }); }
+    marcados.clear();
+    carregar();
+  };
+  const restaurar = async (m, botao) => comBotao(botao, async () => {
+    try { await api('extratos.restaurarMovimento', { movimentoId: m.id }); toast('Movimento voltou para "Para classificar".'); carregar(); } catch (e) { toast(e.message, { tipo: 'erro' }); }
+  });
   const carregarSeq = {};
   const carregar = async () => {
     const minha = (carregarSeq.n = (carregarSeq.n || 0) + 1);
@@ -88,6 +139,7 @@ async function telaExtratos({ subtitulo }) {
       busca: f.busca.value.trim() || undefined });
     if (minha !== carregarSeq.n) return; // chegou uma busca mais nova
     itens = r.itens;
+    [...marcados].forEach((id) => { if (!itens.some((m) => m.id === id)) marcados.delete(id); });
     limpar(resumo, Object.entries(SITUACAO).filter(([k]) => r.resumoPorSituacao[k]).map(([k, v]) => {
       const x = r.resumoPorSituacao[k];
       return h('button', { class: 'discreto', onclick: () => { f.situacao.value = k; carregar(); } }, etiqueta(v.nome, v.cor), ' ', h('b', null, x.quantidade),
@@ -96,16 +148,23 @@ async function telaExtratos({ subtitulo }) {
     desenhar();
   };
   const desenhar = () => {
+    const selecionaveis = itens.filter(excluivel);
+    const todos = h('input', { type: 'checkbox', 'aria-label': 'Selecionar todos', checked: selecionaveis.length > 0 && selecionaveis.every((m) => marcados.has(m.id)),
+      onchange: () => { selecionaveis.forEach((m) => (todos.checked ? marcados.add(m.id) : marcados.delete(m.id))); desenhar(); } });
+    atualizarSel();
     limpar(lista, !itens.length ? h('div', { class: 'vazio' }, f.situacao.value === 'PENDENTE' ? 'Nada para classificar. 🎉' : 'Nenhum movimento com esses filtros.') : h('table', { class: 'tabela' },
-      h('thead', null, h('tr', null, ['Data', 'Conta', 'Histórico', 'Valor', 'Situação', ''].map((t, i) => h('th', { class: i === 3 ? 'direita' : '' }, t)))),
-      h('tbody', null, itens.map((m) => h('tr', null,
+      h('thead', null, h('tr', null, fin ? h('th', null, selecionaveis.length ? todos : '') : null, ['Data', 'Conta', 'Histórico', 'Valor', 'Situação', ''].map((t, i) => h('th', { class: i === 3 ? 'direita' : '' }, t)))),
+      h('tbody', null, itens.map((m) => h('tr', { class: m.situacao === 'EXCLUIDO' || m.situacao === 'DUPLICADO' ? 'apagada' : '' },
+        fin ? h('td', null, excluivel(m) ? h('input', { type: 'checkbox', checked: marcados.has(m.id), 'aria-label': 'Selecionar movimento de ' + data(m.data),
+          onchange: (e) => { e.target.checked ? marcados.add(m.id) : marcados.delete(m.id); atualizarSel(); } }) : null) : null,
         h('td', { class: 'num' }, data(m.data)), h('td', { class: 'pequeno' }, contaNome(m.contaBancariaId)),
         h('td', null, m.historico, m.contraparte && !comparavel(m.historico).includes(comparavel(m.contraparte)) ? h('div', { class: 'secundario pequeno' }, m.contraparte) : null,
           m.observacao ? h('div', { class: 'secundario pequeno' }, m.observacao) : null),
         h('td', { class: 'direita num', style: { color: m.valorCentavos > 0 ? 'var(--st-pago)' : null } }, (m.valorCentavos > 0 ? '+ ' : '− ') + reais(Math.abs(m.valorCentavos))),
         h('td', null, etiqueta(SITUACAO[m.situacao].nome, SITUACAO[m.situacao].cor), detalheMovimento(m)),
         h('td', null, fin && podeMudar(m) ? h('button', { class: m.situacao === 'PENDENTE' ? 'primario' : 'discreto', onclick: () => classificar(m, carregar) },
-          m.situacao === 'PENDENTE' ? 'Classificar' : 'Mudar') : null))))));
+          m.situacao === 'PENDENTE' ? 'Classificar' : 'Mudar') : null,
+          fin && (m.situacao === 'DUPLICADO' || m.situacao === 'EXCLUIDO') ? h('button', { class: 'discreto', onclick: (e) => restaurar(m, e.currentTarget) }, 'Restaurar') : null))))));
   };
   let espera;
   Object.values(f).forEach((el) => el.addEventListener(el.type === 'search' ? 'input' : 'change', () => {
@@ -114,7 +173,7 @@ async function telaExtratos({ subtitulo }) {
   }));
   const exportar = h('button', { onclick: () => exportarPlanilha('extrato-' + hojeIso(), ['Data', 'Empresa', 'Conta', 'Histórico', 'Nome', 'CPF/CNPJ', 'Valor (R$)', 'Situação', 'Classificação', 'Categoria', 'Contas'],
     itens.map((m) => [data(m.data), app.nomeEmpresa(m.empresaId), contaNome(m.contaBancariaId), m.historico, m.contraparte, m.documento, reaisPlanilha(m.valorCentavos),
-      SITUACAO[m.situacao].nome, CLASSIFICACAO[m.classificacao] || '', nomeCategoria(m.categoriaId), m.contas.map((c) => c.rotulo).join(', ')])) }, 'Exportar para Excel');
+      SITUACAO[m.situacao].nome, CLASSIFICACAO[m.classificacao] || '', nomeCategoria(m.categoriaId), m.contas.map((c) => c.rotulo).join(', ')])) }, 'Exportar (Excel ou PDF)');
   const regras = fin ? h('button', { onclick: () => telaRegras() }, 'Regras automáticas') : null;
   await carregar();
   return [
@@ -124,8 +183,9 @@ async function telaExtratos({ subtitulo }) {
       h('label', { class: 'campo' }, 'Situação', f.situacao), h('label', { class: 'campo' }, 'Tipo', f.tipo),
       h('label', { class: 'campo' }, 'Empresa', f.empresa), h('label', { class: 'campo' }, 'Conta', f.conta),
       h('label', { class: 'campo' }, 'De', f.de), h('label', { class: 'campo' }, 'Até', f.ate),
-      h('div', { class: 'acoes', style: { alignSelf: 'end' } }, h('button', { class: 'primario', onclick: () => carregar() }, 'Filtrar'), exportar, regras)),
-    resumo, lista,
+      h('div', { class: 'acoes', style: { alignSelf: 'end' } }, h('button', { class: 'primario', onclick: () => carregar() }, 'Filtrar'),
+        h('button', { class: 'discreto', onclick: () => { fixo.limpar(); atualizarContas(); carregar(); } }, 'Limpar filtros'), exportar, regras)),
+    resumo, barraSel, lista,
   ];
 }
 
@@ -160,6 +220,17 @@ function blocoImportarExtrato(depois) {
     area);
 }
 
+const ontemIso = () => { const d = new Date(hojeIso() + 'T12:00:00'); d.setDate(d.getDate() - 1); return d.toISOString().slice(0, 10); };
+
+/** Resultado da comparação saldo do banco × saldo do sistema. */
+export function avisoConferencia(c) {
+  if (c.saldoSistemaCentavos === null) return h('div', { class: 'secundario pequeno' }, 'Saldo do banco em ' + data(c.data) + ': ' + reais(c.saldoBancoCentavos) + ' (a conta não tem saldo inicial até essa data para comparar).');
+  if (c.bate) return h('div', { class: 'mensagem ok' }, '✅ Saldo bate com o banco em ' + data(c.data) + ': ' + reais(c.saldoBancoCentavos) + '.');
+  return h('div', { class: 'mensagem erro' }, h('b', null, '⚠️ Saldo não bate com o banco em ' + data(c.data) + '. '),
+    'Banco: ' + reais(c.saldoBancoCentavos) + ' · Sistema: ' + reais(c.saldoSistemaCentavos) + ' · diferença ' + reais(c.diferencaCentavos) + '. ',
+    'Confira o saldo inicial, se falta importar algum período ou se há movimento excluído por engano (veja o relatório de conciliação).');
+}
+
 /** OFX costuma vir em Windows-1252 (acentos): tenta UTF-8 e cai para 1252. */
 async function lerTextoOfx(arq) {
   const buf = await arq.arrayBuffer();
@@ -174,22 +245,32 @@ function mostrarPrevia(nomeArquivo, lido, area, depois) {
   const entradas = lido.movimentos.filter((m) => m.valorCentavos > 0).reduce((s, m) => s + m.valorCentavos, 0);
   const saidas = lido.movimentos.filter((m) => m.valorCentavos < 0).reduce((s, m) => s - m.valorCentavos, 0);
   const futuros = lido.movimentos.filter((m) => m.data > hojeIso()).length;
+  const deHoje = lido.movimentos.filter((m) => m.data === hojeIso());
+  const soAteOntem = h('input', { type: 'checkbox', checked: true });
   const progresso = h('p', { class: 'secundario pequeno' });
   const resultado = h('div');
   const botao = h('button', { class: 'primario sucesso' }, 'Importar ' + lido.movimentos.length + ' movimentos');
   botao.onclick = () => comBotao(botao, async () => {
     const cb = app.contaBancaria(conta.value);
     if (!cb) { toast('Escolha de qual conta é o extrato.', { tipo: 'erro' }); return; }
-    const movs = lido.movimentos.filter((m) => m.data <= hojeIso());
+    const limite = deHoje.length && soAteOntem.checked ? ontemIso() : hojeIso();
+    const movs = lido.movimentos.filter((m) => m.data <= limite);
+    // Saldo do banco no arquivo: se os movimentos de hoje ficaram de fora, desconta-os para comparar com o fim de ontem.
+    let saldoBanco = lido.saldoBanco || null;
+    if (saldoBanco && saldoBanco.data > limite) {
+      const doDia = lido.movimentos.filter((m) => m.data > limite && m.data <= saldoBanco.data).reduce((x, m) => x + m.valorCentavos, 0);
+      saldoBanco = { valorCentavos: saldoBanco.valorCentavos - doDia, data: limite };
+    }
     const total = { novas: 0, repetidas: 0, erros: 0, PENDENTE: 0, CONCILIADO: 0, LANCADO: 0, TRANSFERENCIA: 0, IGNORADO: 0 };
-    let extratoId; let baixas = 0; let vendas = null; let erro = '';
+    let extratoId; let baixas = 0; let vendas = null; let erro = ''; let conferencia = null;
     try {
       for (let i = 0; i < movs.length; i += LOTE_EXTRATO) {
         progresso.textContent = 'Importando ' + Math.min(i + LOTE_EXTRATO, movs.length) + ' de ' + movs.length + '…';
         const r = await api('extratos.importar', { empresaId: cb.empresaId, contaBancariaId: cb.id, formato: lido.formato, arquivo: nomeArquivo.slice(0, 120),
           periodoDe: lido.periodoDe || undefined, periodoAte: lido.periodoAte || undefined, extratoId, ultimo: i + LOTE_EXTRATO >= movs.length,
+          saldoBanco: i + LOTE_EXTRATO >= movs.length && saldoBanco ? saldoBanco : undefined,
           itens: movs.slice(i, i + LOTE_EXTRATO) });
-        extratoId = r.extratoId; baixas += r.baixas; if (r.vendas) vendas = r.vendas;
+        extratoId = r.extratoId; baixas += r.baixas; if (r.vendas) vendas = r.vendas; if (r.conferencia) conferencia = r.conferencia;
         Object.keys(total).forEach((k) => { total[k] += r.contagem[k] || 0; });
         const falha = r.resultados.find((x) => x.situacao === 'ERRO');
         if (falha && !erro) erro = falha.mensagem;
@@ -202,7 +283,8 @@ function mostrarPrevia(nomeArquivo, lido, area, depois) {
       total.TRANSFERENCIA + ' transferências', ' · ', total.IGNORADO + ' ignorados', h('br'),
       h('b', null, total.PENDENTE + ' para classificar'),
       vendas && (vendas.recebidas || vendas.provaveis) ? h('div', null, 'Soft Up: ' + vendas.recebidas + ' vendas achadas no extrato, ' + vendas.provaveis + ' prováveis para confirmar.') : null,
-      erro ? h('div', { class: 'mensagem erro' }, total.erros + ' linha(s) com problema: ' + erro) : null));
+      erro ? h('div', { class: 'mensagem erro' }, total.erros + ' linha(s) com problema: ' + erro) : null,
+      conferencia ? avisoConferencia(conferencia) : null));
     toast('Extrato importado.');
     depois();
   });
@@ -211,6 +293,10 @@ function mostrarPrevia(nomeArquivo, lido, area, depois) {
       ' · entradas ' + reais(entradas) + ' · saídas ' + reais(saidas), lido.banco ? ' · ' + lido.banco : ''),
     doFinal.length !== 1 ? h('p', { class: 'mensagem aviso' }, lido.contaFinal ? 'Não achei conta cadastrada com final ' + lido.contaFinal + '. Escolha abaixo (ou cadastre a conta em Empresas e contas bancárias).' : 'O arquivo não traz o número da conta: escolha abaixo.') : null,
     futuros ? h('p', { class: 'secundario pequeno' }, futuros + ' lançamento(s) com data futura (agendados) ficam de fora: importe de novo depois que acontecerem.') : null,
+    deHoje.length ? h('div', { class: 'mensagem aviso' }, h('b', null, 'O arquivo traz ' + deHoje.length + ' movimento(s) de hoje. '),
+      'Lançamentos do dia ainda podem mudar de descrição no banco e entrar duplicados depois. O mais seguro é importar só até ontem.',
+      h('label', { class: 'check', style: { marginTop: '6px' } }, soAteOntem, 'Importar só até ontem (' + data(ontemIso()) + ')')) : null,
+    lido.saldoBanco ? h('p', { class: 'secundario pequeno' }, 'Saldo informado pelo banco no arquivo: ' + reais(lido.saldoBanco.valorCentavos) + ' em ' + data(lido.saldoBanco.data) + '. Depois de importar, o sistema compara com o saldo dele.') : null,
     h('div', { class: 'grade-campos' }, h('label', { class: 'campo largo' }, 'Extrato da conta', conta)),
     h('div', { class: 'acoes', style: { marginTop: '10px' } }, botao), progresso, resultado));
 }
@@ -324,6 +410,7 @@ async function telaVendas({ subtitulo }) {
     busca: h('input', { type: 'search', placeholder: 'Nº da venda, cliente, vendedor ou valor' }),
     de: h('input', { type: 'date' }), ate: h('input', { type: 'date' }),
   };
+  const fixoVendas = fixarFiltros('vendas', f);
   const resumo = h('div', { class: 'resumo' });
   const lista = h('div', { class: 'bloco rolagem' });
   let itens = [];
@@ -371,14 +458,15 @@ async function telaVendas({ subtitulo }) {
   Object.values(f).forEach((el) => el.addEventListener(el.type === 'search' ? 'input' : 'change', () => { clearTimeout(espera); espera = setTimeout(carregar, el.type === 'search' ? 350 : 0); }));
   const exportar = h('button', { onclick: () => exportarPlanilha('soft-up-' + hojeIso(), ['Venda', 'Cliente', 'Vendedor', 'Vencimento (ajustado)', 'Vencimento no Soft Up', 'Valor devido (R$)', 'Situação', 'Data no extrato', 'Quem pagou', 'Conta'],
     itens.map((v) => [v.numero, v.cliente, v.vendedor, data(v.vencimento), data(v.vencimentoSoftup), reaisPlanilha(v.devidoCentavos), VENDA[v.situacao].nome,
-      v.movimento ? data(v.movimento.data) : '', v.movimento ? v.movimento.contraparte : '', v.movimento ? contaNome(v.movimento.contaBancariaId) : ''])) }, 'Exportar para Excel');
+      v.movimento ? data(v.movimento.data) : '', v.movimento ? v.movimento.contraparte : '', v.movimento ? contaNome(v.movimento.contaBancariaId) : ''])) }, 'Exportar (Excel ou PDF)');
   await carregar();
   return [
     fin && genial ? blocoImportarSoftUp(genial, carregar) : null,
     h('div', { class: 'bloco filtros' },
       h('label', { class: 'campo busca' }, 'Buscar', f.busca), h('label', { class: 'campo' }, 'Situação', f.situacao),
       h('label', { class: 'campo' }, 'Vencimento de', f.de), h('label', { class: 'campo' }, 'até', f.ate),
-      h('div', { class: 'acoes', style: { alignSelf: 'end' } }, h('button', { class: 'primario', onclick: () => carregar() }, 'Filtrar'), exportar)),
+      h('div', { class: 'acoes', style: { alignSelf: 'end' } }, h('button', { class: 'primario', onclick: () => carregar() }, 'Filtrar'),
+        h('button', { class: 'discreto', onclick: () => { fixoVendas.limpar(); carregar(); } }, 'Limpar filtros'), exportar)),
     resumo, lista,
   ];
 }

@@ -3,7 +3,7 @@
  */
 import { api } from './api.js';
 import { app } from './app.js';
-import { h, limpar, reais, data, hojeIso, toast, dialogo, pedirMotivo, comBotao, campoValor, opcoes, exportarPlanilha, reaisPlanilha, buscaLocal, bateBusca } from './ui.js';
+import { h, limpar, reais, data, hojeIso, toast, dialogo, pedirMotivo, comBotao, campoValor, opcoes, exportarPlanilha, reaisPlanilha, buscaLocal, bateBusca, fixarFiltros } from './ui.js';
 
 const primeiroDoMes = () => hojeIso().slice(0, 8) + '01';
 
@@ -28,7 +28,7 @@ export async function telaReceitas({ subtitulo }) {
   let ultimas = [];
   const exportar = h('button', { onclick: () => exportarPlanilha('receitas-' + hojeIso(), ['Data', 'Empresa', 'Conta', 'Categoria', 'Descrição', 'Valor (R$)', 'Situação', 'Lançado por'],
     ultimas.map((x) => { const cb = app.contaBancaria(x.contaBancariaId); const cat = app.categoria(x.categoriaId);
-      return [data(x.data), app.nomeEmpresa(x.empresaId), cb ? cb.apelido : '', cat ? cat.codigo + ' ' + cat.nome : '', x.descricao, reaisPlanilha(x.valorCentavos), x.status === 'CANCELADA' ? 'Cancelada' : 'Ativa', x.lancadoPor]; })) }, 'Exportar para Excel');
+      return [data(x.data), app.nomeEmpresa(x.empresaId), cb ? cb.apelido : '', cat ? cat.codigo + ' ' + cat.nome : '', x.descricao, reaisPlanilha(x.valorCentavos), x.status === 'CANCELADA' ? 'Cancelada' : 'Ativa', x.lancadoPor]; })) }, 'Exportar (Excel ou PDF)');
   const carregarSeq = {};
   const carregar = async () => {
     const minha = (carregarSeq.n = (carregarSeq.n || 0) + 1);
@@ -61,7 +61,8 @@ export async function telaReceitas({ subtitulo }) {
   let espera;
   Object.values(filtro).forEach((el) => { if (el.classList.contains('valor')) return; el.addEventListener(el.type === 'search' ? 'input' : 'change', () => { clearTimeout(espera); espera = setTimeout(carregar, el.type === 'search' ? 350 : 0); }); });
   const btnFiltrar = h('button', { class: 'primario', onclick: () => carregar() }, 'Filtrar');
-  const btnLimpar = h('button', { class: 'discreto', onclick: () => { filtro.busca.value = ''; filtro.valorDe.value = ''; filtro.valorAte.value = ''; filtro.categoria.value = ''; filtro.empresa.value = ''; filtro.de.value = primeiroDoMes(); filtro.ate.value = hojeIso(); carregar(); } }, 'Limpar');
+  const fixoReceitas = fixarFiltros('receitas', filtro);
+  const btnLimpar = h('button', { class: 'discreto', onclick: () => { fixoReceitas.limpar(); carregar(); } }, 'Limpar filtros');
   await carregar();
   return [fin ? formReceita(carregar) : null,
     h('p', { class: 'secundario pequeno' }, 'As entradas dos extratos importados (em "Extratos e Soft Up") já entram aqui sozinhas.'),
@@ -174,7 +175,7 @@ export async function telaRecebidosDono({ subtitulo }) {
   let ultimos = [];
   const exportar = h('button', { onclick: () => exportarPlanilha('fora-do-caixa-' + hojeIso(), ['Data', 'Tipo', 'Empresa', 'Cliente / favorecido', 'O que foi', 'Quem recebeu / pagou', 'Forma', 'Valor (R$)', 'Observações', 'Situação'],
     ultimos.map((x) => [data(x.data), TIPOS_FORA[x.tipo].curto, app.nomeEmpresa(x.empresaId), x.cliente, x.descricao, x.recebidoPor, FORMAS_RECEBIMENTO[x.formaRecebimento] || x.formaRecebimento,
-      reaisPlanilha(x.tipo === 'SAIDA' ? -x.valorCentavos : x.valorCentavos), x.observacoes, x.status === 'CANCELADO' ? 'Cancelado' : 'Ativo'])) }, 'Exportar para Excel');
+      reaisPlanilha(x.tipo === 'SAIDA' ? -x.valorCentavos : x.valorCentavos), x.observacoes, x.status === 'CANCELADO' ? 'Cancelado' : 'Ativo'])) }, 'Exportar (Excel ou PDF)');
   const carregar = async () => {
     const r = await api('recebidosDono.listar', { tipo: filtro.tipo.value || undefined, empresaId: filtro.empresa.value || undefined, de: filtro.de.value || undefined,
       ate: filtro.ate.value || undefined, busca: filtro.busca.value.trim() || undefined, incluirCancelados: filtro.cancelados.checked });
@@ -280,7 +281,7 @@ export async function telaRecorrentes({ subtitulo }) {
   const filtradas = () => todas.filter((r) => bateBusca(textoBusca, r.fornecedorNome, r.descricao, app.nomeEmpresa(r.empresaId), r.valorCentavos));
   const exportar = h('button', { onclick: () => exportarPlanilha('recorrentes-' + hojeIso(), ['Fornecedor', 'Descrição', 'Empresa', 'Repete', 'Valor (R$)', 'Tipo de valor', 'Próximo vencimento', 'Termina em', 'Situação'],
     filtradas().map((r) => [r.fornecedorNome, r.descricao, app.nomeEmpresa(r.empresaId), PERIODO[r.periodicidade], reaisPlanilha(r.valorCentavos), r.valorTipo === 'ESTIMADO' ? 'Estimado' : 'Fixo',
-      r.ativo ? data(r.proximoVencimento) : '', data(r.termino), r.ativo ? 'Ativa' : 'Encerrada'])) }, 'Exportar para Excel');
+      r.ativo ? data(r.proximoVencimento) : '', data(r.termino), r.ativo ? 'Ativa' : 'Encerrada'])) }, 'Exportar (Excel ou PDF)');
   const carregar = async (soFiltrar) => {
     if (soFiltrar !== true) todas = await api('recorrencias.listar', { incluirEncerradas: encerradas.checked });
     const lista = filtradas();
@@ -340,7 +341,7 @@ export async function telaFornecedores({ subtitulo }) {
   const tabela = h('div', { class: 'bloco rolagem' });
   let ultimos = [];
   const exportar = h('button', { onclick: () => exportarPlanilha('fornecedores-' + hojeIso(), ['Nome', 'CPF/CNPJ', 'Categoria de costume', 'Dados para pagamento'],
-    ultimos.map((f) => { const c = app.cad.categorias.find((x) => x.codigo === f.categoriaCodigo); return [f.nome, formatarDocumento(f.documento), c ? c.codigo + ' ' + c.nome : '', f.dadosPagamento || '']; })) }, 'Exportar para Excel');
+    ultimos.map((f) => { const c = app.cad.categorias.find((x) => x.codigo === f.categoriaCodigo); return [f.nome, formatarDocumento(f.documento), c ? c.codigo + ' ' + c.nome : '', f.dadosPagamento || '']; })) }, 'Exportar (Excel ou PDF)');
   let consulta = 0;
   const carregar = async () => {
     const minha = ++consulta; // só a última busca desenha (evita itens repetidos quando as respostas chegam fora de ordem)

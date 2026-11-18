@@ -235,7 +235,114 @@ function celulaCsv(v) {
 }
 
 /** Baixa uma planilha (CSV com ; e acentos, abre direto no Excel). linhas: listas de valores. */
-export function exportarPlanilha(nomeArquivo, cabecalho, linhas) {
+/**
+ * Exporta uma tabela. Pergunta o formato: Excel (planilha) ou PDF (para imprimir/enviar).
+ * opcoes: { titulo, subtitulo, totais (soma as colunas "(R$)"), formato ('EXCEL'|'PDF' para não perguntar) }
+ */
+/** Pergunta Excel ou PDF. Devolve 'EXCEL', 'PDF' ou null. */
+export function perguntarFormato(quantidade) {
+  return dialogo((fechar) => [h('h2', null, 'Exportar' + (quantidade === undefined ? '' : ' ' + (quantidade === 1 ? '1 linha' : quantidade + ' linhas'))),
+    h('p', { class: 'secundario pequeno' }, 'Excel para mexer nos números; PDF para imprimir, arquivar ou enviar.'),
+    h('div', { class: 'acoes fim' }, h('button', { onclick: () => fechar(null) }, 'Voltar'),
+      h('button', { onclick: () => fechar('EXCEL') }, 'Excel'), h('button', { class: 'primario', onclick: () => fechar('PDF') }, 'PDF'))]);
+}
+
+/** Lê um CSV com ";" (o que o servidor gera) como lista de listas. */
+export function lerCsv(texto) {
+  const linhas = []; let linha = []; let campo = ''; let aspas = false;
+  const t = String(texto).replace(/^\uFEFF/, '');
+  for (let i = 0; i < t.length; i++) {
+    const ch = t[i];
+    if (aspas) { if (ch === '"') { if (t[i + 1] === '"') { campo += '"'; i++; } else aspas = false; } else campo += ch; continue; }
+    if (ch === '"') aspas = true;
+    else if (ch === ';') { linha.push(campo); campo = ''; }
+    else if (ch === '\n' || ch === '\r') { if (ch === '\r' && t[i + 1] === '\n') i++; linha.push(campo); linhas.push(linha); linha = []; campo = ''; }
+    else campo += ch;
+  }
+  if (campo !== '' || linha.length) { linha.push(campo); linhas.push(linha); }
+  return linhas.filter((l) => l.some((x) => x !== ''));
+}
+
+export async function exportarPlanilha(nomeArquivo, cabecalho, linhas, opcoesExp = {}) {
+  const formato = opcoesExp.formato || await perguntarFormato(linhas.length);
+  if (!formato) return;
+  if (formato === 'PDF') {
+    try { await exportarPdf(nomeArquivo, cabecalho, linhas, opcoesExp); } catch (e) { toast(e.message, { tipo: 'erro' }); }
+    return;
+  }
+  exportarCsv(nomeArquivo, cabecalho, linhas);
+}
+
+const tituloDoArquivo = (nome) => {
+  const t = String(nome).replace(/-\d{4}-\d{2}-\d{2}$/, '').replace(/[-_]+/g, ' ').trim();
+  return t.charAt(0).toUpperCase() + t.slice(1);
+};
+const formatoReais = new Intl.NumberFormat('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+let logoPdf;
+async function logoParaPdf() {
+  if (logoPdf !== undefined) return logoPdf;
+  try {
+    const img = new Image(); img.src = 'genial-mix.png';
+    await img.decode();
+    const c = document.createElement('canvas'); c.width = img.naturalWidth; c.height = img.naturalHeight;
+    c.getContext('2d').drawImage(img, 0, 0);
+    logoPdf = { url: c.toDataURL('image/png'), proporcao: img.naturalWidth / img.naturalHeight };
+  } catch (e) { logoPdf = null; }
+  return logoPdf;
+}
+
+/** Gera o PDF da tabela (paisagem quando há muitas colunas), com cabeçalho, totais e numeração de páginas. */
+export async function exportarPdf(nomeArquivo, cabecalho, linhas, opcoesExp = {}) {
+  try { await carregarScript('jspdf.umd.min.js'); await carregarScript('jspdf.plugin.autotable.min.js'); } catch (e) { throw new Error('Não foi possível preparar o PDF. Confira a internet e tente de novo.'); }
+  const { jsPDF } = window.jspdf;
+  const paisagem = opcoesExp.paisagem !== undefined ? opcoesExp.paisagem : cabecalho.length > 6;
+  const doc = new jsPDF({ orientation: paisagem ? 'landscape' : 'portrait', unit: 'mm', format: 'a4' });
+  const largura = doc.internal.pageSize.getWidth();
+  const altura = doc.internal.pageSize.getHeight();
+  const colReais = cabecalho.map((c) => /\(R\$\)/.test(String(c)));
+  const corpo = linhas.map((l) => l.map((v, i) => (colReais[i] && typeof v === 'number' ? formatoReais.format(v) : v === null || v === undefined ? '' : String(v))));
+  let rodape = null;
+  if (opcoesExp.totais && linhas.length) {
+    rodape = [cabecalho.map((c, i) => (i === 0 ? 'Total' : colReais[i] ? formatoReais.format(linhas.reduce((s, l) => s + (typeof l[i] === 'number' ? l[i] : 0), 0)) : ''))];
+  }
+  const titulo = opcoesExp.titulo || tituloDoArquivo(nomeArquivo);
+  const logo = await logoParaPdf();
+  const quem = (window.__usuarioNome || '');
+  const gerado = 'Gerado em ' + new Date().toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' }) + (quem ? ' por ' + quem : '');
+  doc.autoTable({
+    head: [cabecalho.map(String)], body: corpo, foot: rodape || undefined, showFoot: 'lastPage',
+    startY: opcoesExp.subtitulo ? 30 : 26, margin: { top: 26, left: 10, right: 10, bottom: 14 },
+    styles: { fontSize: cabecalho.length > 9 ? 6.5 : 8, cellPadding: 1.6, overflow: 'linebreak', lineColor: [227, 230, 236], lineWidth: 0.1 },
+    headStyles: { fillColor: [20, 33, 61], textColor: 255, fontStyle: 'bold' },
+    footStyles: { fillColor: [244, 239, 225], textColor: [20, 33, 61], fontStyle: 'bold' },
+    alternateRowStyles: { fillColor: [248, 249, 251] },
+    columnStyles: Object.fromEntries(colReais.map((r, i) => [i, r ? { halign: 'right' } : {}])),
+    didParseCell: (d) => {
+      if (d.section === 'body' && opcoesExp.destaque) {
+        const tipo = opcoesExp.destaque(linhas[d.row.index] || []);
+        if (tipo === 'forte') { d.cell.styles.fontStyle = 'bold'; d.cell.styles.fillColor = [244, 239, 225]; }
+        if (tipo === 'suave') { d.cell.styles.fillColor = [238, 241, 246]; d.cell.styles.textColor = [80, 90, 110]; }
+      }
+      if (colReais[d.column.index] && d.section !== 'head') {
+        d.cell.styles.halign = 'right';
+        if (String(d.cell.raw).trim().startsWith('-')) d.cell.styles.textColor = [180, 35, 24];
+      }
+    },
+    didDrawPage: () => {
+      if (logo) doc.addImage(logo.url, 'PNG', 10, 8, 12 * logo.proporcao > 40 ? 40 : 12 * logo.proporcao, 12 * logo.proporcao > 40 ? 40 / logo.proporcao : 12);
+      doc.setFontSize(13); doc.setTextColor(20, 33, 61); doc.text(titulo, logo ? 56 : 10, 14, { maxWidth: largura - (logo ? 66 : 20) });
+      doc.setFontSize(8); doc.setTextColor(102, 112, 133);
+      if (opcoesExp.subtitulo) doc.text(String(opcoesExp.subtitulo), logo ? 56 : 10, 19.5, { maxWidth: largura - (logo ? 66 : 20) });
+      doc.text(gerado, largura / 2, altura - 6, { align: 'center' });
+      doc.text('Página ' + doc.internal.getNumberOfPages(), largura - 10, altura - 6, { align: 'right' });
+      doc.text('Contas a Pagar · Kaluf & Gomes', 10, altura - 6);
+    },
+  });
+  doc.save(String(nomeArquivo).replace(/[^\w.-]+/g, '-') + '.pdf');
+  toast('PDF gerado (' + linhas.length + (linhas.length === 1 ? ' linha).' : ' linhas).'));
+}
+
+function exportarCsv(nomeArquivo, cabecalho, linhas) {
   const conteudo = [cabecalho].concat(linhas).map((l) => l.map(celulaCsv).join(';')).join('\r\n');
   const url = URL.createObjectURL(new Blob(['﻿' + conteudo], { type: 'text/csv;charset=utf-8' }));
   const a = h('a', { href: url, download: nomeArquivo.replace(/[^\w.-]+/g, '-') + (nomeArquivo.endsWith('.csv') ? '' : '.csv') });
@@ -301,4 +408,40 @@ export function bateBusca(busca, ...campos) {
   const alvo = campos.map((c) => (typeof c === 'number' ? (c / 100).toFixed(2).replace('.', ',') + ' ' + reais(c) : String(c || ''))).join(' ')
     .toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
   return b.split(/\s+/).every((p) => alvo.includes(p) || alvo.replace(/\./g, '').includes(p));
+}
+
+
+/**
+ * Filtros fixos: guarda o que foi escolhido nos filtros de uma tela (neste aparelho) e devolve ao voltar.
+ * campos: objeto { nome: elemento } (input, select, checkbox, campo de valor). Devolve { restaurar(nomes?), limpar(), salvar() }.
+ */
+export function fixarFiltros(chave, campos) {
+  const id = 'filtros:' + (window.__usuarioId || '') + ':' + chave;
+  const padrao = {};
+  const ler = (el) => (el.type === 'checkbox' ? el.checked : el.value);
+  const porValor = (el, v) => { if (el.type === 'checkbox') el.checked = !!v; else el.value = v; };
+  Object.entries(campos).forEach(([k, el]) => { if (el) padrao[k] = ler(el); });
+  let guardado = {};
+  try { guardado = JSON.parse(localStorage.getItem(id) || '{}') || {}; } catch (e) { guardado = {}; }
+  const salvar = () => {
+    const v = {};
+    Object.entries(campos).forEach(([k, el]) => { if (el) v[k] = ler(el); });
+    try { localStorage.setItem(id, JSON.stringify(v)); } catch (e) { /* sem armazenamento: segue sem fixar */ }
+  };
+  const restaurar = (nomes) => {
+    (nomes || Object.keys(campos)).forEach((k) => {
+      const el = campos[k];
+      if (!el || !(k in guardado)) return;
+      if (el.tagName === 'SELECT' && guardado[k] !== '' && ![...el.options].some((o) => o.value === guardado[k])) return;
+      porValor(el, guardado[k]);
+    });
+  };
+  Object.values(campos).forEach((el) => { if (el) { el.addEventListener('change', salvar); el.addEventListener('input', salvar); } });
+  restaurar();
+  return {
+    restaurar,
+    salvar,
+    alterado: () => Object.entries(campos).some(([k, el]) => el && ler(el) !== padrao[k]),
+    limpar: () => { Object.entries(campos).forEach(([k, el]) => { if (el) porValor(el, padrao[k]); }); guardado = {}; try { localStorage.removeItem(id); } catch (e) { /* idem */ } },
+  };
 }
