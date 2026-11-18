@@ -71,10 +71,12 @@ const moeda = new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL
 export const reais = (centavos) => moeda.format((Number(centavos) || 0) / 100);
 
 /** "1.234,56" ou "1234,5" ou "R$ 10" → centavos (inteiro). Inválido → null. */
-export function paraCentavos(texto) {
-  const limpo = String(texto || '').replace(/[R$\s]/g, '').replace(/\./g, '').replace(',', '.');
+export function paraCentavos(texto, comSinal) {
+  let limpo = String(texto || '').replace(/[R$\s]/g, '').replace(/\./g, '').replace(',', '.');
+  const negativo = comSinal && /^-/.test(limpo);
+  if (negativo) limpo = limpo.slice(1);
   if (!/^\d+(\.\d{1,2})?$/.test(limpo)) return null;
-  return Math.round(parseFloat(limpo) * 100);
+  return (negativo ? -1 : 1) * Math.round(parseFloat(limpo) * 100);
 }
 export const centavosParaTexto = (c) => (c === null || c === undefined || c === '' ? '' : (Number(c) / 100).toFixed(2).replace('.', ','));
 
@@ -97,6 +99,8 @@ export const ROTULO_STATUS = {
   DEVOLVIDO: 'Devolvido (tirar do banco)', APROVADO: 'Aprovado / agendado', PAGO: 'Pago', RECUSADO: 'Recusado', CANCELADO: 'Cancelado',
 };
 export const FORMAS = { BOLETO: 'Boleto', PIX: 'Pix', TED: 'TED', DEBITO_AUTOMATICO: 'Débito automático', CARTAO: 'Cartão', DINHEIRO: 'Dinheiro', OUTRO: 'Outro' };
+/** Rótulo de qualquer forma (inclui as que não aparecem para escolher, como o desconto em folha). */
+export const rotuloForma = (f) => FORMAS[f] || (f === 'DESCONTO_FOLHA' ? 'Desconto em folha' : f || '');
 
 /** Trilho das cinco etapas; o ponto em ouro é onde a conta está. */
 export function trilho(status, grande) {
@@ -164,19 +168,35 @@ export async function comBotao(botao, fn) {
 }
 
 /** Lê um arquivo como base64. Fotos grandes são reduzidas (até 2000 px, JPEG). */
+/**
+ * Prepara o anexo: PDF vai como está; foto de qualquer formato que o aparelho abra (HEIC do iPhone, WEBP do
+ * WhatsApp, foto sem tipo do Android...) é convertida para JPG e reduzida. Assim o arquivo sempre chega ao financeiro.
+ */
 export async function lerArquivo(arquivo) {
-  const tipos = ['application/pdf', 'image/jpeg', 'image/png'];
-  if (!tipos.includes(arquivo.type)) throw new Error('Envie PDF, JPG ou PNG.');
+  const nome = arquivo.name || 'arquivo';
+  const ehPdf = arquivo.type === 'application/pdf' || /\.pdf$/i.test(nome);
   let blob = arquivo;
-  if (arquivo.type !== 'application/pdf' && arquivo.size > 1500000) blob = await reduzirImagem(arquivo);
+  if (ehPdf) {
+    if (arquivo.size > 5 * 1048576) throw new Error('PDF maior que 5 MB. Diminua o arquivo ou envie uma foto.');
+    blob = arquivo.type === 'application/pdf' ? arquivo : new Blob([arquivo], { type: 'application/pdf' });
+  } else if (!['image/jpeg', 'image/png'].includes(arquivo.type) || arquivo.size > 1500000) {
+    try { blob = await reduzirImagem(arquivo); } catch (e) {
+      throw new Error('Não consegui abrir esta imagem (' + (arquivo.type || 'formato desconhecido') + '). Tire um print da foto ou envie em PDF, JPG ou PNG.');
+    }
+  }
   const buf = new Uint8Array(await blob.arrayBuffer());
   let bin = '';
   for (let i = 0; i < buf.length; i += 0x8000) bin += String.fromCharCode.apply(null, buf.subarray(i, i + 0x8000));
-  return { nomeArquivo: arquivo.name, mime: blob.type, conteudoBase64: btoa(bin), tamanho: buf.length };
+  const nomeFinal = blob.type === 'image/jpeg' && !/\.jpe?g$/i.test(nome) ? nome.replace(/\.[^.]*$/, '') + '.jpg' : nome;
+  return { nomeArquivo: nomeFinal.slice(0, 120), mime: blob.type, conteudoBase64: btoa(bin), tamanho: buf.length };
 }
 
 async function reduzirImagem(arquivo) {
-  const img = await createImageBitmap(arquivo);
+  let img;
+  try { img = await createImageBitmap(arquivo); } catch (e) {
+    // Alguns aparelhos só abrem pelo <img> (ex.: HEIC no Safari).
+    img = await new Promise((ok, falha) => { const i = new Image(); const u = URL.createObjectURL(arquivo); i.onload = () => { URL.revokeObjectURL(u); ok(i); }; i.onerror = falha; i.src = u; });
+  }
   const escala = Math.min(1, 2000 / Math.max(img.width, img.height));
   const c = document.createElement('canvas');
   c.width = Math.round(img.width * escala);
@@ -186,13 +206,14 @@ async function reduzirImagem(arquivo) {
 }
 
 /** Campo de valor em reais que guarda centavos em el.centavos. */
-export function campoValor(props = {}) {
+export function campoValor(props = {}, comSinal) {
   const el = h('input', Object.assign({ class: 'valor', inputmode: 'decimal', placeholder: '0,00', autocomplete: 'off' }, props));
   el.addEventListener('blur', () => {
-    const c = paraCentavos(el.value);
+    const c = paraCentavos(el.value, comSinal);
     if (c !== null) el.value = centavosParaTexto(c);
   });
-  Object.defineProperty(el, 'centavos', { get: () => paraCentavos(el.value), set: (v) => { el.value = centavosParaTexto(v); } });
+  if (comSinal) el.inputMode = 'text';
+  Object.defineProperty(el, 'centavos', { get: () => paraCentavos(el.value, comSinal), set: (v) => { el.value = centavosParaTexto(v); } });
   return el;
 }
 

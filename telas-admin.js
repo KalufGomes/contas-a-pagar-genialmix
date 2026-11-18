@@ -6,7 +6,7 @@
 import { api, sessao } from './api.js';
 import { app } from './app.js';
 import { CONFIG } from './config.js';
-import { h, limpar, dataHora, toast, dialogo, pedirMotivo, comBotao, opcoes } from './ui.js';
+import { h, limpar, dataHora, data, reais, hojeIso, campoValor, toast, dialogo, pedirMotivo, comBotao, opcoes } from './ui.js';
 
 const NOME_PERFIL = { GERENTE: 'Gerente', FINANCEIRO: 'Financeiro', APROVADOR: 'Aprovação', GESTOR: 'Gestão (consulta e relatórios)', ADMIN: 'Administração' };
 
@@ -140,7 +140,8 @@ export async function telaEmpresas({ subtitulo }) {
   const r = await api('cadastros.listar', { incluirInativos: true });
   const recarregar = async () => { await app.recarregarCadastros(); app.recarregar(); };
   return [h('div', { class: 'acoes' }, h('button', { class: 'primario', onclick: () => formEmpresa(null, recarregar) }, 'Nova empresa'),
-    h('button', { onclick: () => formContaBancaria(null, r.empresas, recarregar) }, 'Nova conta bancária')),
+    h('button', { onclick: () => formContaBancaria(null, r.empresas, recarregar, r.contasBancarias) }, 'Nova conta')),
+  await blocoFechamentos(),
   r.empresas.map((e) => h('section', { class: 'bloco' },
     h('div', { class: 'acoes', style: { justifyContent: 'space-between' } },
       h('div', null, h('h2', null, e.nome + (e.ativo ? '' : ' (inativa)')),
@@ -148,8 +149,10 @@ export async function telaEmpresas({ subtitulo }) {
       h('button', { class: 'discreto', onclick: () => formEmpresa(e, recarregar) }, 'Editar')),
     h('table', { class: 'tabela', style: { marginTop: '10px' } }, h('tbody', null,
       r.contasBancarias.filter((c) => c.empresaId === e.id).map((c) => h('tr', { style: c.ativo ? null : { color: 'var(--nevoa)' } },
-        h('td', null, c.apelido + (c.ativo ? '' : ' (inativa)')), h('td', null, c.banco + ' · ag. ' + c.agencia + ' · conta final ' + c.contaFinal),
-        h('td', { class: 'direita' }, h('button', { class: 'discreto', onclick: () => formContaBancaria(c, r.empresas, recarregar) }, 'Editar')))))))),
+        h('td', null, c.apelido + (c.ativo ? '' : ' (inativa)')),
+        h('td', null, (c.tipo || 'BANCO') === 'BANCO' ? c.banco + ' · ag. ' + c.agencia + ' · conta final ' + c.contaFinal : (TIPOS_CONTA.find((t) => t[0] === c.tipo) || [0, c.tipo])[1]),
+        h('td', { class: 'secundario pequeno' }, c.saldoInicialData ? 'Saldo inicial ' + reais(c.saldoInicialCentavos) + ' em ' + data(c.saldoInicialData) : h('span', { style: { color: '#B42318' } }, 'Sem saldo inicial')),
+        h('td', { class: 'direita' }, h('button', { class: 'discreto', onclick: () => formContaBancaria(c, r.empresas, recarregar, r.contasBancarias) }, 'Editar')))))))),
   ];
 }
 
@@ -178,26 +181,89 @@ function formEmpresa(e, depois) {
   });
 }
 
-function formContaBancaria(c, empresas, depois) {
+const TIPOS_CONTA = [['BANCO', 'Conta de banco'], ['CAIXA', 'Caixa (dinheiro da loja)'], ['PESSOA_FISICA', 'Pessoa física do dono'], ['APLICACAO', 'Aplicação (só o gestor vê o saldo)']];
+
+function formContaBancaria(c, empresas, depois, todasContas) {
   return dialogo((fechar) => {
     const empresa = h('select', null, opcoes(empresas.filter((e) => e.ativo).map((e) => [e.id, e.nome]), c ? c.empresaId : '', 'Escolha'));
+    const tipo = h('select', null, opcoes(TIPOS_CONTA, c ? c.tipo || 'BANCO' : 'BANCO'));
     const apelido = h('input', { value: c ? c.apelido : '', maxlength: 60, placeholder: 'Ex.: Itaú movimento' });
     const banco = h('input', { value: c ? c.banco : '', maxlength: 60 });
     const agencia = h('input', { value: c ? c.agencia : '', maxlength: 10, inputmode: 'numeric' });
     const contaFinal = h('input', { value: c ? c.contaFinal : '', maxlength: 4, inputmode: 'numeric' });
+    const vinculada = h('select');
+    const saldo = campoValor({ placeholder: 'Ex.: 12.345,67 (use - se negativo)' }, true);
+    if (c && c.saldoInicialCentavos !== null && c.saldoInicialCentavos !== undefined) saldo.centavos = c.saldoInicialCentavos;
+    const saldoData = h('input', { type: 'date', value: c ? c.saldoInicialData || '' : '', max: hojeIso() });
+    const blocoBanco = h('div', { class: 'grade-campos' }, h('label', { class: 'campo' }, 'Banco', banco), h('label', { class: 'campo' }, 'Agência', agencia),
+      h('label', { class: 'campo' }, 'Últimos 4 dígitos da conta', h('span', { class: 'dica' }, 'O número completo não é guardado.'), contaFinal));
+    const blocoVinculada = h('label', { class: 'campo' }, 'Aplicação de qual conta de banco', vinculada);
+    const atualizar = () => {
+      const t = tipo.value;
+      blocoBanco.hidden = t !== 'BANCO';
+      blocoVinculada.hidden = t !== 'APLICACAO';
+      limpar(vinculada, opcoes((todasContas || []).filter((x) => x.empresaId === empresa.value && (x.tipo || 'BANCO') === 'BANCO' && x.ativo).map((x) => [x.id, x.apelido]), c ? c.contaVinculadaId : '', 'Escolha'));
+    };
+    tipo.addEventListener('change', atualizar); empresa.addEventListener('change', atualizar); atualizar();
     const at = campoAtivo(c);
     const erro = h('p', { class: 'mensagem erro', hidden: true });
     const botao = h('button', { class: 'primario' }, 'Salvar');
     botao.onclick = () => comBotao(botao, async () => {
-      const dados = { empresaId: empresa.value, apelido: apelido.value.trim(), banco: banco.value.trim(), agencia: agencia.value.trim(), contaFinal: contaFinal.value.trim() };
+      erro.hidden = true;
+      const dados = { empresaId: empresa.value, tipo: tipo.value, apelido: apelido.value.trim() };
+      if (tipo.value === 'BANCO') Object.assign(dados, { banco: banco.value.trim(), agencia: agencia.value.trim(), contaFinal: contaFinal.value.trim() });
+      if (tipo.value === 'APLICACAO') dados.contaVinculadaId = vinculada.value;
+      if (saldoData.value) {
+        if (saldo.centavos === null) { erro.textContent = 'Saldo inicial inválido.'; erro.hidden = false; return; }
+        dados.saldoInicialData = saldoData.value; dados.saldoInicialCentavos = saldo.centavos;
+      } else if (saldo.value.trim()) { erro.textContent = 'Informe a data do saldo inicial.'; erro.hidden = false; return; }
       if (c) Object.assign(dados, { id: c.id, versao: c.versao, ativo: at.ativo.checked, motivo: at.motivo.value.trim() || undefined });
-      try { await api('admin.contasBancarias.salvar', dados); fechar(true); toast('Conta bancária salva.'); depois(); } catch (err) { erroEm(erro)(err); }
+      try { await api('admin.contasBancarias.salvar', dados); fechar(true); toast('Conta salva.'); depois(); } catch (err) {
+        if (err.codigo === 'SEM_EFEITO') { fechar(false); toast('Nada mudou.'); return; }
+        erroEm(erro)(err);
+      }
     });
-    return [h('h2', null, c ? 'Editar conta bancária' : 'Nova conta bancária'),
-      h('label', { class: 'campo' }, 'Empresa', empresa), h('label', { class: 'campo' }, 'Apelido', apelido),
-      h('div', { class: 'grade-campos' }, h('label', { class: 'campo' }, 'Banco', banco), h('label', { class: 'campo' }, 'Agência', agencia),
-        h('label', { class: 'campo' }, 'Últimos 4 dígitos da conta', h('span', { class: 'dica' }, 'O número completo não é guardado.'), contaFinal)),
+    return [h('h2', null, c ? 'Editar conta' : 'Nova conta'),
+      h('div', { class: 'grade-campos' }, h('label', { class: 'campo' }, 'Empresa', empresa), h('label', { class: 'campo' }, 'Tipo', tipo)),
+      h('label', { class: 'campo' }, 'Apelido', apelido),
+      blocoBanco, blocoVinculada,
+      h('section', { class: 'bloco', style: { marginTop: '10px' } }, h('h3', null, 'Saldo inicial'),
+        h('p', { class: 'secundario pequeno' }, 'O saldo que o banco (ou o caixa) mostrava no FIM do dia informado. O sistema soma tudo o que acontecer depois dessa data. Ex.: saldo de 31/10 e o extrato importado a partir de 01/11.'),
+        h('div', { class: 'grade-campos' }, h('label', { class: 'campo' }, 'Saldo (R$)', saldo), h('label', { class: 'campo' }, 'No fim do dia', saldoData))),
       at.el, erro, h('div', { class: 'acoes fim' }, h('button', { onclick: () => fechar(false) }, 'Voltar'), botao)];
+  });
+}
+
+/** Fechamentos da conciliação por empresa: o administrador reabre (volta a data) com justificativa. */
+async function blocoFechamentos() {
+  const area = h('section', { class: 'bloco' });
+  const carregar = async () => {
+    let lista = [];
+    try { lista = await api('saldos.fechamentos', {}); } catch (e) { limpar(area, h('p', { class: 'mensagem erro' }, e.message)); return; }
+    limpar(area, h('h2', null, 'Fechamento da conciliação'),
+      h('p', { class: 'secundario pequeno' }, 'O financeiro fecha os dias já conferidos; nada com data até o fechamento pode ser lançado, alterado ou baixado. Só o administrador reabre.'),
+      h('table', { class: 'tabela', style: { marginTop: '8px' } }, h('tbody', null, lista.map((f) => h('tr', null,
+        h('td', null, f.nome), h('td', null, f.dataAte ? 'Fechada até ' + data(f.dataAte) + (f.fechadoPor ? ' · ' + f.fechadoPor : '') : h('span', { class: 'secundario' }, 'Não fechada')),
+        h('td', { class: 'direita' }, f.dataAte ? h('button', { class: 'discreto', onclick: () => reabrir(f, carregar) }, 'Reabrir') : null))))));
+  };
+  await carregar();
+  return area;
+}
+
+function reabrir(f, depois) {
+  return dialogo((fechar) => {
+    const ate = h('input', { type: 'date', max: f.dataAte });
+    const motivo = h('textarea', { maxlength: 500 });
+    const erro = h('p', { class: 'mensagem erro', hidden: true });
+    const botao = h('button', { class: 'primario perigo' }, 'Reabrir');
+    botao.onclick = () => comBotao(botao, async () => {
+      try { await api('saldos.reabrirConciliacao', { empresaId: f.empresaId, data: ate.value || undefined, motivo: motivo.value.trim() }); toast('Conciliação reaberta.'); fechar(true); depois(); } catch (e) { erroEm(erro)(e); }
+    });
+    return [h('h2', null, 'Reabrir conciliação · ' + f.nome),
+      h('p', null, 'Hoje está fechada até ' + data(f.dataAte) + '.'),
+      h('label', { class: 'campo' }, 'Deixar fechada só até', h('span', { class: 'dica' }, 'Vazio = reabre tudo.'), ate),
+      h('label', { class: 'campo' }, 'Justificativa', motivo),
+      erro, h('div', { class: 'acoes fim' }, h('button', { onclick: () => fechar(false) }, 'Voltar'), botao)];
   });
 }
 
@@ -312,5 +378,5 @@ export async function telaHistorico({ subtitulo }) {
   entidade.addEventListener('change', carregar);
   await carregar();
   return [h('div', { class: 'bloco' }, h('div', { class: 'acoes' }, verificar), resultado),
-    h('div', { class: 'filtros' }, h('label', { class: 'campo' }, 'Mostrar', entidade)), tabela];
+    h('div', { class: 'filtros' }, h('label', { class: 'campo' }, 'Mostrar', entidade), h('button', { class: 'primario', style: { alignSelf: 'end' }, onclick: () => carregar() }, 'Filtrar')), tabela];
 }

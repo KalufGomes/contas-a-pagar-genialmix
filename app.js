@@ -13,10 +13,11 @@ import * as adm from './telas-admin.js';
 import * as rel from './telas-relatorios.js';
 import { telaImportar } from './telas-importacao.js';
 import { telaConciliacao, telaHolerites } from './telas-conciliacao.js';
+import { telaSaldos } from './telas-saldos.js';
 import { ativarPush, situacaoPush } from './push.js';
 
 /** Mostrada no rodapé: confirma que o aparelho está com as telas novas. */
-const VERSAO_TELA = '0.10.1';
+const VERSAO_TELA = '0.11.0';
 
 const raiz = document.getElementById('app');
 
@@ -61,7 +62,7 @@ const ROTAS = [
   { id: 'painel', titulo: 'Painel', perfis: ['FINANCEIRO', 'APROVADOR', 'GESTOR'], icone: 'grafico', tela: rel.telaPainel },
   { id: 'dre', titulo: 'DRE gerencial', curto: 'DRE', perfis: ['GESTOR'], icone: 'tabela', tela: rel.telaDre },
   { id: 'receitas', titulo: 'Receitas', perfis: ['FINANCEIRO', 'APROVADOR', 'GESTOR'], icone: 'entrada', tela: fin.telaReceitas },
-  { id: 'recebido-dono', titulo: 'Fora do caixa', curto: 'Fora do caixa', perfis: ['FINANCEIRO', 'APROVADOR', 'GESTOR'], icone: 'pessoas', tela: fin.telaRecebidosDono },
+  { id: 'saldos', titulo: 'Contas e saldos', curto: 'Saldos', perfis: ['FINANCEIRO', 'APROVADOR', 'GESTOR'], icone: 'carteira', tela: telaSaldos },
   { id: 'recorrentes', titulo: 'Contas recorrentes', perfis: ['FINANCEIRO', 'APROVADOR', 'GESTOR'], oculta: true, pai: 'contas', tela: fin.telaRecorrentes },
   { id: 'fornecedores', titulo: 'Fornecedores', perfis: ['FINANCEIRO'], icone: 'pessoas', tela: fin.telaFornecedores },
   { id: 'usuarios', titulo: 'Usuários e acessos', curto: 'Usuários', grupo: 'Administração', perfis: ['ADMIN'], icone: 'pessoas', tela: adm.telaUsuarios },
@@ -256,6 +257,8 @@ const ROTAS_AUTO = ['para-fazer', 'para-aprovar', 'a-pagar', 'minhas'];
 function atualizarListaAberta() {
   const id = (location.hash.replace(/^#\/?/, '') || '').split('?')[0] || (rotaInicial(rotasDoMenu()) || {}).id;
   if (!ROTAS_AUTO.includes(id) || document.querySelector('.painel, .dialogo, .barra-lote:not([hidden])')) return false;
+  // Alguém digitando uma busca ou com contas marcadas: não recarrega por baixo dela.
+  if ([...document.querySelectorAll('#conteudo input[type=search]')].some((x) => x.value) || document.querySelector('#conteudo input[type=checkbox]:checked')) return false;
   rotear();
   return true;
 }
@@ -391,7 +394,7 @@ async function abrirAviso(n) {
   try { await api('notificacoes.marcarLidas', { ids: [n.id] }); } catch (e) { /* segue */ }
   verificarAvisos();
   if (n.contaId) { app.abrirConta(n.contaId); return; }
-  const rota = { APROVADA_LOTE: 'a-pagar', AGUARDANDO_APROVACAO_LOTE: 'para-aprovar', PAGAS_EXTRATO_LOTE: 'contas',
+  const rota = { APROVADA_LOTE: 'a-pagar', AGUARDANDO_APROVACAO_LOTE: 'para-aprovar', PAGAS_EXTRATO_LOTE: 'contas', PAGAS_LOTE: 'minhas',
     EXTRATO_PENDENTE_LOTE: 'conciliacao', RECEITAS_EXTRATO_LOTE: 'receitas' }[n.tipo];
   if (rota) app.navegar(rota);
 }

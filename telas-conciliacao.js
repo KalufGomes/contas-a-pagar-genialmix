@@ -21,12 +21,13 @@ const SITUACAO = {
   PENDENTE: { nome: 'Para classificar', cor: 'urgente' },
   CONCILIADO: { nome: 'Baixa de conta a pagar', cor: 'ok' },
   LANCADO: { nome: 'Lançado', cor: 'ok' },
-  TRANSFERENCIA: { nome: 'Transferência entre contas', cor: '' },
-  IGNORADO: { nome: 'Ignorado (aplicação/resgate)', cor: '' },
+  TRANSFERENCIA: { nome: 'Transferência / aplicação', cor: '' },
+  IGNORADO: { nome: 'Ignorado', cor: '' },
 };
 const CLASSIFICACAO = {
   CONTA_A_PAGAR: 'Conta a pagar', VARIAS_CONTAS: 'Várias contas', SALARIOS: 'Salários (holerites)', DESPESA: 'Despesa',
   RECEITA: 'Receita', RECEITA_VENDA: 'Receita de vendas', TRANSFERENCIA: 'Transferência', INVESTIMENTO_OU_OUTRO: 'Ignorado',
+  APLICACAO: 'Aplicação', RESGATE: 'Resgate da aplicação', TRANSFERENCIA_CONTA: 'Transferência entre contas',
 };
 const VENDA = {
   RECEBIDO: { nome: 'Recebido no banco — falta baixar no Soft Up', curto: 'Recebido (baixar no Soft Up)', cor: 'ok' },
@@ -35,7 +36,7 @@ const VENDA = {
   BAIXADA_SOFTUP: { nome: 'Já baixada no Soft Up', curto: 'Baixada no Soft Up', cor: '' },
 };
 const etiqueta = (texto, cor) => h('span', { class: 'etiqueta' + (cor === 'urgente' ? ' urgente' : cor === 'ok' ? ' ok' : cor === 'aviso' ? ' aviso' : '') }, texto);
-const contaNome = (id) => { const c = app.contaBancaria(id); return c ? c.apelido + ' · final ' + c.contaFinal : ''; };
+const contaNome = (id) => { const c = app.contaBancaria(id); return c ? c.apelido + (c.contaFinal ? ' · final ' + c.contaFinal : '') : ''; };
 const nomeCategoria = (id) => { const c = app.categoria(id); return c ? c.codigo + ' ' + c.nome : ''; };
 const temGenial = () => app.cad.empresas.some((e) => e.marca === 'genial-mix');
 
@@ -79,10 +80,13 @@ async function telaExtratos({ subtitulo }) {
   const resumo = h('div', { class: 'resumo' });
   const lista = h('div', { class: 'bloco rolagem' });
   let itens = [];
+  const carregarSeq = {};
   const carregar = async () => {
+    const minha = (carregarSeq.n = (carregarSeq.n || 0) + 1);
     const r = await api('extratos.movimentos', { empresaId: f.empresa.value || undefined, contaBancariaId: f.conta.value || undefined,
       situacao: f.situacao.value || undefined, tipo: f.tipo.value || undefined, de: f.de.value || undefined, ate: f.ate.value || undefined,
       busca: f.busca.value.trim() || undefined });
+    if (minha !== carregarSeq.n) return; // chegou uma busca mais nova
     itens = r.itens;
     limpar(resumo, Object.entries(SITUACAO).filter(([k]) => r.resumoPorSituacao[k]).map(([k, v]) => {
       const x = r.resumoPorSituacao[k];
@@ -120,7 +124,7 @@ async function telaExtratos({ subtitulo }) {
       h('label', { class: 'campo' }, 'Situação', f.situacao), h('label', { class: 'campo' }, 'Tipo', f.tipo),
       h('label', { class: 'campo' }, 'Empresa', f.empresa), h('label', { class: 'campo' }, 'Conta', f.conta),
       h('label', { class: 'campo' }, 'De', f.de), h('label', { class: 'campo' }, 'Até', f.ate),
-      h('div', { class: 'acoes', style: { alignSelf: 'end' } }, exportar, regras)),
+      h('div', { class: 'acoes', style: { alignSelf: 'end' } }, h('button', { class: 'primario', onclick: () => carregar() }, 'Filtrar'), exportar, regras)),
     resumo, lista,
   ];
 }
@@ -132,7 +136,8 @@ function detalheMovimento(m) {
   if (m.contas.length) partes.push(m.contas.map((c) => c.rotulo + ' ' + c.fornecedorNome).join(', '));
   if (m.categoriaId && !m.contas.length) partes.push(nomeCategoria(m.categoriaId));
   if (m.regra) partes.push('regra: ' + m.regra);
-  if (m.vendaId) partes.push('venda do Soft Up');
+  if (m.transferenciaPara) partes.push((m.valorCentavos > 0 ? 'de ' : 'para ') + m.transferenciaPara);
+  if (m.vendaId) partes.push(m.vendaNumero ? 'venda nº ' + m.vendaNumero : 'venda do Soft Up');
   return partes.length ? h('div', { class: 'secundario pequeno' }, partes.join(' · ')) : null;
 }
 
@@ -215,8 +220,8 @@ function classificar(m, depois) {
   const credito = m.valorCentavos > 0;
   return dialogo((fechar) => {
     const opcoesAcao = (credito
-      ? [['RECEITA', 'Receita (venda ou outra entrada)'], ['TRANSFERENCIA', 'Transferência entre contas do grupo / do sócio'], ['IGNORAR', 'Ignorar (resgate, estorno, devolução...)']]
-      : [['CONTA', 'Pagou conta(s) a pagar já lançada(s)'], ['DESPESA', 'Despesa paga (lançar agora)'], ['TRANSFERENCIA', 'Transferência entre contas do grupo / ao sócio'], ['IGNORAR', 'Ignorar (aplicação, devolução...)']]);
+      ? [['RECEITA', 'Receita (venda ou outra entrada)'], ['APLICACAO', 'Resgate da aplicação (volta da conta aplicação)'], ['TRANSFERENCIA', 'Transferência de outra conta (do grupo, caixa, PF)'], ['IGNORAR', 'Ignorar (estorno, devolução...)']]
+      : [['CONTA', 'Pagou conta(s) a pagar já lançada(s)'], ['DESPESA', 'Despesa paga (lançar agora)'], ['APLICACAO', 'Aplicação (foi para a conta aplicação)'], ['TRANSFERENCIA', 'Transferência para outra conta (do grupo, caixa, PF)'], ['IGNORAR', 'Ignorar (devolução...)']]);
     let acao = m.situacao === 'PENDENTE' ? (credito ? 'RECEITA' : (m.sugestoes && m.sugestoes.length ? 'CONTA' : 'DESPESA')) : opcoesAcao[0][0];
     const radios = h('div', { class: 'campo' }, opcoesAcao.map(([v, r]) => h('label', { class: 'check' },
       h('input', { type: 'radio', name: 'acao-mov', value: v, checked: v === acao, onchange: () => { acao = v; mostrar(); } }), r)));
@@ -235,6 +240,11 @@ function classificar(m, depois) {
       somaSel]
       : h('p', { class: 'secundario pequeno' }, 'Nenhuma conta em aberto com esse valor. Se for um pagamento ainda não lançado, use "Despesa paga".'));
     const blocoCat = h('label', { class: 'campo' }, 'Categoria', cat);
+    const outras = app.cad.contasBancarias.filter((c) => c.ativo && c.id !== m.contaBancariaId && c.tipo !== 'APLICACAO');
+    const destino = h('select', null, opcoes(outras.map((c) => [c.id, app.nomeEmpresa(c.empresaId) + ' · ' + c.apelido]), '', 'Conta fora do sistema (só marcar)'));
+    const blocoDestino = h('label', { class: 'campo' }, credito ? 'Veio de qual conta' : 'Foi para qual conta', h('span', { class: 'dica' }, 'Escolha a conta para o saldo dela também mudar.'), destino);
+    const venda = h('input', { maxlength: 20, inputmode: 'numeric', placeholder: 'Ex.: 12345', value: m.vendaNumero || '' });
+    const blocoVenda = credito ? h('label', { class: 'campo' }, 'Nº da venda no Soft Up', h('span', { class: 'dica' }, 'Opcional. Liga esta entrada à venda (e marca a venda como recebida).'), venda) : null;
     const textoPadrao = m.documento || m.contraparte || m.historico.replace(/\d{6,}.*$/, '').trim();
     const sempre = h('input', { type: 'checkbox' });
     const textoRegra = h('input', { value: textoPadrao.slice(0, 80), maxlength: 80 });
@@ -246,6 +256,8 @@ function classificar(m, depois) {
     const mostrar = () => {
       blocoConta.hidden = acao !== 'CONTA';
       blocoCat.hidden = !['DESPESA', 'RECEITA'].includes(acao);
+      blocoDestino.hidden = acao !== 'TRANSFERENCIA';
+      if (blocoVenda) blocoVenda.hidden = acao !== 'RECEITA';
       blocoRegra.hidden = acao === 'CONTA';
     };
     mostrar();
@@ -255,18 +267,23 @@ function classificar(m, depois) {
       const dados = { movimentoId: m.id, versao: m.versao, acao, observacao: obs.value.trim() || undefined };
       if (acao === 'CONTA') dados.contaIds = [...marcadas];
       if (['DESPESA', 'RECEITA'].includes(acao)) dados.categoriaId = cat.value;
+      if (acao === 'TRANSFERENCIA' && destino.value) dados.contaDestinoId = destino.value;
       if (sempre.checked && acao !== 'CONTA') dados.regra = { texto: textoRegra.value.trim(), aplicarAosPendentes: aplicarOutros.checked };
       try {
         const r = await api('extratos.classificar', dados);
+        let avisoVenda = '';
+        if (blocoVenda && acao === 'RECEITA' && venda.value.trim() && venda.value.trim() !== (m.vendaNumero || '')) {
+          try { await api('vendas.vincular', { movimentoId: m.id, numero: venda.value.trim() }); avisoVenda = ' Ligado à venda nº ' + venda.value.trim() + '.'; } catch (e2) { avisoVenda = ' Venda não ligada: ' + e2.message; }
+        }
         fechar(true);
-        toast('Movimento classificado.' + (r.outrosClassificados ? ' Mais ' + r.outrosClassificados + ' iguais classificados pela regra.' : ''));
+        toast('Movimento classificado.' + avisoVenda + (r.outrosClassificados ? ' Mais ' + r.outrosClassificados + ' iguais classificados pela regra.' : ''), avisoVenda.includes('não ligada') ? { tipo: 'erro', duracao: 10000 } : undefined);
         depois();
       } catch (e) { erro.textContent = e.message; erro.hidden = false; }
     });
     return [h('h2', null, (credito ? 'Entrada de ' : 'Saída de ') + reais(Math.abs(m.valorCentavos))),
       h('p', null, data(m.data) + ' · ' + contaNome(m.contaBancariaId)), h('p', { class: 'secundario' }, m.historico + (m.contraparte ? ' · ' + m.contraparte : '')),
       m.situacao !== 'PENDENTE' ? h('p', { class: 'mensagem aviso' }, 'Hoje está como "' + SITUACAO[m.situacao].nome + '". Ao mudar, o lançamento anterior é cancelado (fica no histórico).') : null,
-      radios, blocoConta, blocoCat, blocoRegra, h('label', { class: 'campo' }, 'Observação', obs), erro,
+      radios, blocoConta, blocoCat, blocoDestino, blocoVenda, blocoRegra, h('label', { class: 'campo' }, 'Observação', obs), erro,
       h('div', { class: 'acoes fim' }, h('button', { onclick: () => fechar(false) }, 'Voltar'), botao)];
   });
 }
@@ -274,14 +291,14 @@ function classificar(m, depois) {
 async function telaRegras() {
   let regras;
   try { regras = await api('extratos.regras', {}); } catch (e) { toast(e.message, { tipo: 'erro' }); return; }
-  const ACAO = { DESPESA: 'Despesa paga', RECEITA: 'Receita', TRANSFERENCIA: 'Transferência', IGNORAR: 'Ignorar' };
+  const ACAO = { DESPESA: 'Despesa paga', RECEITA: 'Receita', TRANSFERENCIA: 'Transferência', APLICACAO: 'Aplicação / resgate', IGNORAR: 'Ignorar' };
   const NAT = { CREDITO: 'entradas', DEBITO: 'saídas', AMBOS: 'entradas e saídas' };
   return dialogo((fechar) => {
     const tabela = h('div', { class: 'rolagem' });
     const desenhar = () => limpar(tabela, h('table', { class: 'tabela' },
       h('thead', null, h('tr', null, ['Quando o extrato tiver', 'Em', 'Classificar como', 'Empresa', ''].map((t) => h('th', null, t)))),
       h('tbody', null, regras.map((r) => h('tr', null, h('td', null, h('b', null, r.texto)), h('td', { class: 'pequeno' }, NAT[r.natureza]),
-        h('td', null, ACAO[r.acao] + (r.categoriaId ? ' · ' + nomeCategoria(r.categoriaId) : '')), h('td', { class: 'pequeno' }, r.empresaId ? app.nomeEmpresa(r.empresaId) : 'Todas'),
+        h('td', null, ACAO[r.acao] + (r.acao === 'TRANSFERENCIA' ? (r.categoriaId === 'CAIXA' ? ' · para o caixa da empresa' : r.categoriaId ? ' · ' + contaNome(r.categoriaId) : '') : r.categoriaId ? ' · ' + nomeCategoria(r.categoriaId) : '')), h('td', { class: 'pequeno' }, r.empresaId ? app.nomeEmpresa(r.empresaId) : 'Todas'),
         h('td', null, h('button', { class: 'discreto', onclick: async (e) => {
           await comBotao(e.target, async () => {
             try { await api('extratos.desativarRegra', { regraId: r.id, versao: r.versao }); regras = regras.filter((x) => x.id !== r.id); desenhar(); toast('Regra desativada.'); } catch (err) { toast(err.message, { tipo: 'erro' }); }
@@ -310,9 +327,12 @@ async function telaVendas({ subtitulo }) {
   const resumo = h('div', { class: 'resumo' });
   const lista = h('div', { class: 'bloco rolagem' });
   let itens = [];
+  const carregarSeq = {};
   const carregar = async () => {
+    const minha = (carregarSeq.n = (carregarSeq.n || 0) + 1);
     const r = await api('vendas.listar', { empresaId: genial ? genial.id : undefined, situacao: f.situacao.value || undefined,
       busca: f.busca.value.trim() || undefined, de: f.de.value || undefined, ate: f.ate.value || undefined });
+    if (minha !== carregarSeq.n) return; // chegou uma busca mais nova
     itens = r.itens;
     limpar(resumo, Object.entries(VENDA).filter(([k]) => r.resumoPorSituacao[k]).map(([k, v]) => h('button', { class: 'discreto', onclick: () => { f.situacao.value = k; carregar(); } },
       etiqueta(v.curto, v.cor), ' ', h('b', null, r.resumoPorSituacao[k].quantidade), ' · ' + reais(r.resumoPorSituacao[k].valorCentavos))));
@@ -325,9 +345,25 @@ async function telaVendas({ subtitulo }) {
         h('td', null, etiqueta(VENDA[v.situacao].curto, VENDA[v.situacao].cor), v.confirmadoPor ? h('div', { class: 'secundario pequeno' }, 'por ' + v.confirmadoPor) : null),
         h('td', { class: 'pequeno' }, v.movimento ? [data(v.movimento.data) + ' · ' + reais(v.movimento.valorCentavos), h('div', null, v.movimento.contraparte || v.movimento.historico), h('div', { class: 'secundario' }, contaNome(v.movimento.contaBancariaId))] : '—'),
         h('td', null, fin && v.situacao === 'PROVAVEL' ? h('div', { class: 'acoes' },
-          h('button', { class: 'primario sucesso', onclick: (e) => confirmar(v, true, e.currentTarget) }, 'É esta'),
+          (v.candidatos || []).length > 1
+            ? h('button', { class: 'primario', onclick: () => escolherCandidato(v) }, 'Escolher (' + v.candidatos.length + ')')
+            : h('button', { class: 'primario sucesso', onclick: (e) => confirmar(v, true, e.currentTarget) }, 'É esta'),
           h('button', { class: 'discreto', onclick: (e) => confirmar(v, false, e.currentTarget) }, 'Não é')) : null))))));
   };
+  const escolherCandidato = (v) => dialogo((fechar) => {
+    let escolhido = v.movimento ? v.movimento.id : '';
+    const erro = h('p', { class: 'mensagem erro', hidden: true });
+    const botao = h('button', { class: 'primario sucesso' }, 'Confirmar esta entrada');
+    botao.onclick = () => comBotao(botao, async () => {
+      try { await api('vendas.confirmar', { vendaId: v.id, versao: v.versao, confirmar: true, movimentoId: escolhido }); fechar(true); toast('Venda marcada como recebida.'); carregar(); } catch (e) { erro.textContent = e.message; erro.hidden = false; }
+    });
+    return [h('h2', null, 'Venda nº ' + v.numero + ' · ' + v.cliente + ' · ' + reais(v.devidoCentavos)),
+      h('p', { class: 'secundario pequeno' }, 'Entradas com o mesmo valor, mas o nome no banco não bate exatamente com o cliente. Escolha a que é desta venda.'),
+      h('div', { class: 'campo' }, v.candidatos.map((x) => h('label', { class: 'check' },
+        h('input', { type: 'radio', name: 'cand-' + v.id, checked: x.id === escolhido, onchange: () => { escolhido = x.id; } }),
+        h('span', null, h('b', null, x.contraparte || x.historico), ' · ' + data(x.data) + ' · ' + reais(x.valorCentavos), h('div', { class: 'secundario pequeno' }, contaNome(x.contaBancariaId) + (x.contraparte ? ' · ' + x.historico : '')))))),
+      erro, h('div', { class: 'acoes fim' }, h('button', { onclick: () => fechar(false) }, 'Voltar'), botao)];
+  });
   const confirmar = (v, sim, botao) => comBotao(botao, async () => {
     try { await api('vendas.confirmar', { vendaId: v.id, versao: v.versao, confirmar: sim }); toast(sim ? 'Venda marcada como recebida.' : 'Ok, a venda continua em aberto.'); carregar(); } catch (e) { toast(e.message, { tipo: 'erro' }); }
   });
@@ -342,7 +378,7 @@ async function telaVendas({ subtitulo }) {
     h('div', { class: 'bloco filtros' },
       h('label', { class: 'campo busca' }, 'Buscar', f.busca), h('label', { class: 'campo' }, 'Situação', f.situacao),
       h('label', { class: 'campo' }, 'Vencimento de', f.de), h('label', { class: 'campo' }, 'até', f.ate),
-      h('div', { class: 'acoes', style: { alignSelf: 'end' } }, exportar)),
+      h('div', { class: 'acoes', style: { alignSelf: 'end' } }, h('button', { class: 'primario', onclick: () => carregar() }, 'Filtrar'), exportar)),
     resumo, lista,
   ];
 }

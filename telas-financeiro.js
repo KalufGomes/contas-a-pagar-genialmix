@@ -20,6 +20,8 @@ export async function telaReceitas({ subtitulo }) {
     canceladas: h('input', { type: 'checkbox' }),
     categoria: h('select', null, opcoes(app.cad.categorias.filter((c) => c.ativo && c.natureza === 'RECEITA').map((c) => [c.id, c.codigo + ' ' + c.nome]), '', 'Todas')),
     busca: h('input', { type: 'search', placeholder: 'Descrição, nome de quem pagou ou valor' }),
+    valorDe: campoValor({ placeholder: 'mín.' }),
+    valorAte: campoValor({ placeholder: 'máx.' }),
   };
   const total = h('p', { class: 'resumo' });
   const tabela = h('div', { class: 'bloco rolagem' });
@@ -27,10 +29,13 @@ export async function telaReceitas({ subtitulo }) {
   const exportar = h('button', { onclick: () => exportarPlanilha('receitas-' + hojeIso(), ['Data', 'Empresa', 'Conta', 'Categoria', 'Descrição', 'Valor (R$)', 'Situação', 'Lançado por'],
     ultimas.map((x) => { const cb = app.contaBancaria(x.contaBancariaId); const cat = app.categoria(x.categoriaId);
       return [data(x.data), app.nomeEmpresa(x.empresaId), cb ? cb.apelido : '', cat ? cat.codigo + ' ' + cat.nome : '', x.descricao, reaisPlanilha(x.valorCentavos), x.status === 'CANCELADA' ? 'Cancelada' : 'Ativa', x.lancadoPor]; })) }, 'Exportar para Excel');
+  const carregarSeq = {};
   const carregar = async () => {
+    const minha = (carregarSeq.n = (carregarSeq.n || 0) + 1);
     const r = await api('receitas.listar', { empresaId: filtro.empresa.value || undefined, de: filtro.de.value || undefined,
       ate: filtro.ate.value || undefined, incluirCanceladas: filtro.canceladas.checked, categoriaId: filtro.categoria.value || undefined,
-      busca: filtro.busca.value.trim() || undefined });
+      busca: filtro.busca.value.trim() || undefined, valorDe: filtro.valorDe.centavos || undefined, valorAte: filtro.valorAte.centavos || undefined });
+    if (minha !== carregarSeq.n) return; // chegou uma busca mais nova
     ultimas = r.itens;
     limpar(total, h('span', null, (r.quantidade || r.itens.length) + ' entradas · total ', h('b', null, reais(r.totalCentavos))));
     subtitulo('Entradas lançadas conforme o extrato de cada conta bancária. Base da DRE gerencial.');
@@ -43,17 +48,20 @@ export async function telaReceitas({ subtitulo }) {
           h('td', { class: 'num' }, data(x.data)), h('td', null, app.nomeEmpresa(x.empresaId)), h('td', null, cb ? cb.apelido : ''),
           h('td', null, cat ? cat.nome : ''), h('td', null, x.descricao, cancelada ? h('div', { class: 'pequeno', style: { textDecoration: 'none' } }, 'Cancelada: ' + x.motivoCancelamento) : null),
           h('td', { class: 'direita num' }, reais(x.valorCentavos)),
-          h('td', null, fin && !cancelada ? h('button', { class: 'discreto', onclick: async (e) => {
-            const motivo = await pedirMotivo('Cancelar entrada', 'Cancelar entrada', true);
+          h('td', { style: { whiteSpace: 'nowrap' } }, fin && !cancelada ? h('button', { class: 'discreto', onclick: () => editarReceita(x, carregar) }, 'Editar') : null,
+            fin && !cancelada ? h('button', { class: 'discreto', onclick: async (e) => {
+            const motivo = await pedirMotivo('Excluir entrada (lançada errada ou em duplicidade)', 'Excluir entrada', true);
             if (!motivo) return;
             await comBotao(e.target, async () => {
-              try { await api('receitas.cancelar', { receitaId: x.id, versao: x.versao, motivo }); toast('Entrada cancelada.'); carregar(); } catch (err) { toast(err.message, { tipo: 'erro' }); }
+              try { await api('receitas.cancelar', { receitaId: x.id, versao: x.versao, motivo }); toast('Entrada excluída.'); carregar(); } catch (err) { toast(err.message, { tipo: 'erro' }); }
             });
-          } }, 'Cancelar') : null));
+          } }, 'Excluir') : null));
       }))));
   };
   let espera;
-  Object.values(filtro).forEach((el) => el.addEventListener(el.type === 'search' ? 'input' : 'change', () => { clearTimeout(espera); espera = setTimeout(carregar, el.type === 'search' ? 350 : 0); }));
+  Object.values(filtro).forEach((el) => { if (el.classList.contains('valor')) return; el.addEventListener(el.type === 'search' ? 'input' : 'change', () => { clearTimeout(espera); espera = setTimeout(carregar, el.type === 'search' ? 350 : 0); }); });
+  const btnFiltrar = h('button', { class: 'primario', onclick: () => carregar() }, 'Filtrar');
+  const btnLimpar = h('button', { class: 'discreto', onclick: () => { filtro.busca.value = ''; filtro.valorDe.value = ''; filtro.valorAte.value = ''; filtro.categoria.value = ''; filtro.empresa.value = ''; filtro.de.value = primeiroDoMes(); filtro.ate.value = hojeIso(); carregar(); } }, 'Limpar');
   await carregar();
   return [fin ? formReceita(carregar) : null,
     h('p', { class: 'secundario pequeno' }, 'As entradas dos extratos importados (em "Extratos e Soft Up") já entram aqui sozinhas.'),
@@ -61,9 +69,43 @@ export async function telaReceitas({ subtitulo }) {
       h('label', { class: 'campo busca' }, 'Buscar', filtro.busca),
       h('label', { class: 'campo' }, 'Empresa', filtro.empresa), h('label', { class: 'campo' }, 'Categoria', filtro.categoria),
       h('label', { class: 'campo' }, 'De', filtro.de),
-      h('label', { class: 'campo' }, 'Até', filtro.ate), h('label', { class: 'check' }, filtro.canceladas, 'Mostrar canceladas'),
-      h('div', { class: 'acoes', style: { alignSelf: 'end' } }, exportar)),
+      h('label', { class: 'campo' }, 'Até', filtro.ate),
+      h('label', { class: 'campo', style: { maxWidth: '120px' } }, 'Valor de', filtro.valorDe), h('label', { class: 'campo', style: { maxWidth: '120px' } }, 'até', filtro.valorAte),
+      h('label', { class: 'check' }, filtro.canceladas, 'Mostrar excluídas'),
+      h('div', { class: 'acoes', style: { alignSelf: 'end' } }, btnFiltrar, btnLimpar, exportar)),
     total, tabela];
+}
+
+/** Corrige uma entrada. Se veio do extrato, só descrição e categoria mudam (valor, data e conta seguem o banco). */
+function editarReceita(x, depois) {
+  return dialogo((fechar) => {
+    const descricao = h('input', { maxlength: 200, value: x.descricao });
+    const categoria = h('select', null, opcoes(app.categoriasDaEmpresa(x.empresaId, 'RECEITA').map((c) => [c.id, c.codigo + ' ' + c.nome]), x.categoriaId));
+    const conta = h('select', null, opcoes(app.cad.contasBancarias.filter((c) => c.empresaId === x.empresaId && c.ativo && c.tipo !== 'APLICACAO').map((c) => [c.id, c.apelido]), x.contaBancariaId));
+    const dataEl = h('input', { type: 'date', value: x.data, max: hojeIso() });
+    const valor = campoValor(); valor.centavos = x.valorCentavos;
+    const motivo = h('textarea', { maxlength: 500, placeholder: 'Por que está corrigindo (fica no histórico)' });
+    const erro = h('p', { class: 'mensagem erro', hidden: true });
+    const salvar = h('button', { class: 'primario' }, 'Salvar correção');
+    salvar.onclick = () => comBotao(salvar, async () => {
+      erro.hidden = true;
+      const d = { receitaId: x.id, versao: x.versao, motivo: motivo.value.trim() };
+      if (descricao.value.trim() !== x.descricao) d.descricao = descricao.value.trim();
+      if (categoria.value !== x.categoriaId) d.categoriaId = categoria.value;
+      if (conta.value !== x.contaBancariaId) d.contaBancariaId = conta.value;
+      if (dataEl.value !== x.data) d.data = dataEl.value;
+      if (valor.centavos !== x.valorCentavos) d.valorCentavos = valor.centavos;
+      if (Object.keys(d).length === 3) { fechar(false); return; }
+      if (d.motivo.length < 5) { erro.textContent = 'Escreva o motivo (ao menos 5 caracteres).'; erro.hidden = false; return; }
+      try { await api('receitas.editar', d); toast('Entrada corrigida.'); fechar(true); depois(); } catch (e) { erro.textContent = e.message; erro.hidden = false; }
+    });
+    return [h('h2', null, 'Corrigir entrada'),
+      h('p', { class: 'secundario pequeno' }, 'Entradas que vieram do extrato só mudam descrição e categoria. Para tirar uma entrada lançada em duplicidade, use Excluir.'),
+      h('div', { class: 'grade-campos' }, h('label', { class: 'campo largo' }, 'Descrição', descricao), h('label', { class: 'campo' }, 'Categoria', categoria),
+        h('label', { class: 'campo' }, 'Conta', conta), h('label', { class: 'campo' }, 'Data', dataEl), h('label', { class: 'campo' }, 'Valor (R$)', valor),
+        h('label', { class: 'campo largo' }, 'Motivo', motivo)),
+      erro, h('div', { class: 'acoes fim' }, h('button', { onclick: () => fechar(false) }, 'Voltar'), salvar)];
+  });
 }
 
 function formReceita(depois) {
@@ -77,7 +119,7 @@ function formReceita(depois) {
     descricao: h('input', { maxlength: 200, placeholder: 'Ex.: vendas do dia, recebimento de cliente' }),
   };
   f.empresa.addEventListener('change', () => {
-    limpar(f.conta, opcoes(app.cad.contasBancarias.filter((c) => c.empresaId === f.empresa.value && c.ativo).map((c) => [c.id, c.apelido]), '', 'Escolha'));
+    limpar(f.conta, opcoes(app.cad.contasBancarias.filter((c) => c.empresaId === f.empresa.value && c.ativo && c.tipo !== 'APLICACAO').map((c) => [c.id, c.apelido]), '', 'Escolha'));
     limpar(f.categoria, opcoes(app.categoriasDaEmpresa(f.empresa.value, 'RECEITA').map((c) => [c.id, c.codigo + ' ' + c.nome]), '', 'Escolha'));
   });
   const erro = h('p', { class: 'mensagem erro', hidden: true });
@@ -267,7 +309,7 @@ export async function telaRecorrentes({ subtitulo }) {
   return [h('div', { class: 'acoes' }, h('button', { class: 'discreto', onclick: () => app.navegar('contas') }, '← Voltar para Contas a pagar'),
     fin ? h('button', { class: 'primario', onclick: () => app.navegar('lancar') }, 'Nova conta recorrente') : null,
     h('label', { class: 'check' }, encerradas, 'Mostrar encerradas')),
-    h('div', { class: 'bloco filtros' }, h('label', { class: 'campo busca' }, 'Buscar', busca), h('div', { class: 'acoes', style: { alignSelf: 'end' } }, exportar)), tabela];
+    h('div', { class: 'bloco filtros' }, h('label', { class: 'campo busca' }, 'Buscar', busca), h('div', { class: 'acoes', style: { alignSelf: 'end' } }, h('button', { class: 'primario', onclick: () => carregar(true) }, 'Filtrar'), exportar)), tabela];
 }
 
 function alterarRecorrencia(r, depois) {
@@ -299,8 +341,11 @@ export async function telaFornecedores({ subtitulo }) {
   let ultimos = [];
   const exportar = h('button', { onclick: () => exportarPlanilha('fornecedores-' + hojeIso(), ['Nome', 'CPF/CNPJ', 'Categoria de costume', 'Dados para pagamento'],
     ultimos.map((f) => { const c = app.cad.categorias.find((x) => x.codigo === f.categoriaCodigo); return [f.nome, formatarDocumento(f.documento), c ? c.codigo + ' ' + c.nome : '', f.dadosPagamento || '']; })) }, 'Exportar para Excel');
+  let consulta = 0;
   const carregar = async () => {
+    const minha = ++consulta; // só a última busca desenha (evita itens repetidos quando as respostas chegam fora de ordem)
     const lista = await api('fornecedores.listar', { busca: busca.value.trim() || undefined });
+    if (minha !== consulta) return;
     ultimos = lista;
     limpar(tabela, !lista.length ? h('div', { class: 'vazio' }, 'Nenhum fornecedor cadastrado.') : h('table', { class: 'tabela' },
       h('thead', null, h('tr', null, h('th', null, 'Nome'), h('th', null, 'CPF/CNPJ'), h('th', null, 'Dados para pagamento'), h('th', null, ''))),
@@ -310,7 +355,7 @@ export async function telaFornecedores({ subtitulo }) {
   let espera;
   busca.addEventListener('input', () => { clearTimeout(espera); espera = setTimeout(carregar, 300); });
   await carregar();
-  return [h('div', { class: 'acoes' }, h('button', { class: 'primario', onclick: () => formFornecedor(null, carregar) }, 'Novo fornecedor'), h('div', { style: { flex: '1 1 260px' } }, busca), exportar), tabela];
+  return [h('div', { class: 'acoes' }, h('button', { class: 'primario', onclick: () => formFornecedor(null, carregar) }, 'Novo fornecedor'), h('div', { style: { flex: '1 1 260px' } }, busca), h('button', { onclick: () => carregar() }, 'Filtrar'), exportar), tabela];
 }
 
 function formatarDocumento(d) {

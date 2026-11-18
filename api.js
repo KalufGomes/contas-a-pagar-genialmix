@@ -56,6 +56,11 @@ export async function api(acao, dados = {}, opcoes = {}) {
       if (tentativa === 1) throw new ErroApi('SEM_CONEXAO', 'Sem conexão com o servidor. Confira a internet e tente de novo.');
     }
   }
+  // Sistema ocupado (outra pessoa gravando um lote): espera e tenta de novo, com a MESMA chave idem (não grava duas vezes).
+  if (resposta && !resposta.ok && resposta.erro && resposta.erro.codigo === 'OCUPADO' && (opcoes.tentativasOcupado || 0) < 3) {
+    await new Promise((ok) => setTimeout(ok, 2500 + Math.random() * 2000));
+    return api(acao, dados, Object.assign({}, opcoes, { idem: corpo.idem, tentativasOcupado: (opcoes.tentativasOcupado || 0) + 1 }));
+  }
   if (resposta && resposta.ok) {
     (ouvintes[acao] || []).forEach((fn) => { try { fn(resposta.dados); } catch (e) { /* só ajuda visual */ } });
     return resposta.dados;

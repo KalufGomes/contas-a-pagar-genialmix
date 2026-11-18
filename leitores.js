@@ -194,11 +194,15 @@ export function diaUtil(iso) {
 }
 export function diaUtilAnterior(iso) { let d = iso; while (!diaUtil(d)) d = somarDias(d, -1); return d; }
 
-/** 5º dia útil do mês (segunda a sexta, sem feriados nacionais). */
+/**
+ * 5º dia útil do mês para o pagamento do salário: conta de segunda a SÁBADO (sem domingos e feriados), como manda a
+ * regra trabalhista. Se o 5º dia cair no sábado, o pagamento é antecipado para o dia útil anterior (sexta).
+ */
 export function quintoDiaUtil(ano, mes) {
-  let d = isoDe(ano, mes, 1); let n = diaUtil(d) ? 1 : 0;
-  while (n < 5) { d = somarDias(d, 1); if (diaUtil(d)) n++; }
-  return d;
+  const conta = (iso) => new Date(iso + 'T00:00:00Z').getUTCDay() !== 0 && !feriados(Number(iso.slice(0, 4))).has(iso);
+  let d = isoDe(ano, mes, 1); let n = conta(d) ? 1 : 0;
+  while (n < 5) { d = somarDias(d, 1); if (conta(d)) n++; }
+  return diaUtilAnterior(d);
 }
 
 // ---------------------------------------------------------------------------

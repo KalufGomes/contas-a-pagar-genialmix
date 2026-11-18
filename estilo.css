@@ -416,3 +416,26 @@ table.dre td:first-child { white-space: nowrap; }
 .alerta-vencidas button { margin-left: auto; color: var(--st-devolvido); }
 .convite-push { background: var(--ouro-claro); border: 1px solid var(--ouro); color: var(--tinta); }
 .convite-push span { flex: 1 1 260px; }
+
+/* 0.11 — detalhes para a aprovação, pagamento em dinheiro, saldos e fluxo de caixa */
+.detalhe-aprovar { margin-top: 6px; padding-top: 6px; border-top: 1px dashed var(--linha); line-height: 1.45; }
+.detalhe-aprovar button { margin-top: 4px; padding: 4px 10px; }
+.destaque-dinheiro { background: #FBF0D9; border-radius: 8px; padding: 8px 10px; }
+.saldos-grade { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 10px; }
+.saldo-cartao { border: 1px solid var(--linha); border-radius: 10px; padding: 12px 14px; background: var(--branco); text-align: left; cursor: pointer; display: grid; gap: 2px; font: inherit; color: inherit; }
+.saldo-cartao:hover { border-color: var(--ouro, #c9a227); }
+.saldo-cartao .valor { font-size: 1.25rem; font-weight: 700; font-variant-numeric: tabular-nums; }
+.saldo-cartao .valor.negativo, .num.negativo { color: #B42318; }
+.tabela-fluxo { font-variant-numeric: tabular-nums; font-size: .86rem; }
+.tabela-fluxo th, .tabela-fluxo td { white-space: nowrap; padding: 5px 8px; text-align: right; }
+.tabela-fluxo th:first-child, .tabela-fluxo td:first-child { text-align: left; position: sticky; left: 0; background: var(--branco); z-index: 1; }
+.tabela-fluxo td.pct { color: var(--nevoa); font-size: .8rem; }
+.tabela-fluxo tr.total td { font-weight: 700; border-top: 2px solid var(--marinho, #14213d); }
+.tabela-fluxo tr.linha-pct td { color: var(--nevoa); font-style: italic; }
+.tabela-fluxo tr.historico td { background: transparent; }
+.fechamento { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; justify-content: space-between; }
+.fechamento .acoes { flex-wrap: wrap; align-items: center; gap: 8px; }
+.fechamento .acoes input[type=date] { width: auto; min-width: 150px; flex: 0 0 auto; }
+.fechamento .acoes button { flex: 0 0 auto; }
+.saldo-cartao { justify-items: start; align-content: start; }
+.saldo-cartao > * { justify-self: stretch; text-align: left; }

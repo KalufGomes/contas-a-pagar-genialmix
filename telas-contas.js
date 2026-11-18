@@ -33,11 +33,26 @@ export function linhaConta(c, sel) {
       c.origem === 'ESTORNO' ? h('span', { class: 'etiqueta' }, 'Estorno') : null,
       c.origem === 'HOLERITE' ? h('span', { class: 'etiqueta' }, 'Holerite') : null,
       c.origem === 'EXTRATO' ? h('span', { class: 'etiqueta' }, 'Pelo extrato') : null,
-      c.origem === 'SOLICITACAO' && app.tem('FINANCEIRO') ? h('span', { class: 'etiqueta' }, 'Pedido do gerente') : null)),
+      c.origem === 'SOLICITACAO' && app.tem('FINANCEIRO') ? h('span', { class: 'etiqueta' }, 'Pedido do gerente') : null,
+      c.origem === 'DINHEIRO_GERENTE' ? h('span', { class: 'etiqueta aviso' }, 'Pago em dinheiro pelo gerente') : null,
+      c.formaPagamento === 'DESCONTO_FOLHA' ? h('span', { class: 'etiqueta' }, 'Desconto em folha') : null,
+      c.qtdAnexos ? h('span', { class: 'etiqueta', title: c.qtdAnexos + ' anexo(s)' }, '📎 ' + c.qtdAnexos) : null),
+    detalhesParaAprovar(c)),
   h('div', { class: 'venc' + (c.vencida ? ' vencida' : '') }, (c.status === 'PAGO' ? 'Pago em ' + data(c.dataPagamento) : 'Vence ' + data(c.dataVencimento)) + (c.vencida ? ' (vencida)' : '')),
   h('div', { class: 'valor' }, reais(c.valorCentavos)),
   h('div', { class: 'col-status' }, statusEl(c.status), trilho(c.status)));
   return linha;
+}
+
+/** Para a aprovação: o essencial à vista, sem precisar abrir cada conta. */
+function detalhesParaAprovar(c) {
+  if (c.status !== 'AGUARDANDO_APROVACAO' || !app.tem('APROVADOR')) return null;
+  const cat = app.categoria(c.categoriaId); const cb = app.contaBancaria(c.contaBancariaId);
+  const partes = [cat ? cat.codigo + ' ' + cat.nome : '', cb ? 'pagar por ' + cb.apelido : '', FORMAS[c.formaPagamento] || '',
+    c.documentoNumero ? 'doc. ' + c.documentoNumero : '', c.lancadoPor ? 'lançada por ' + c.lancadoPor : ''].filter(Boolean);
+  return h('div', { class: 'detalhe-aprovar secundario pequeno' }, partes.join(' · '),
+    c.observacoes ? h('div', null, h('b', null, 'Obs.: '), c.observacoes) : null,
+    h('button', { type: 'button', class: 'discreto pequeno', onclick: (e) => { e.stopPropagation(); abrirDetalhe(c.id); } }, 'Ver detalhes e anexos'));
 }
 
 function listaContas(itens, vazio, selecao) {
@@ -63,8 +78,9 @@ function comBuscaEExportar(itens, nomeArquivo, desenhar) {
   let filtrados = itens;
   const busca = buscaLocal('Fornecedor, descrição, observação, valor ou nº', (b) => { filtrados = itens.filter((c) => buscaConta(b, c)); limpar(area, desenhar(filtrados)); });
   const exportar = h('button', { onclick: () => exportarPlanilha(nomeArquivo + '-' + hojeIso(), CABECALHO_CONTAS, filtrados.map(linhaPlanilhaConta)) }, 'Exportar para Excel');
+  const filtrar = h('button', { class: 'primario', onclick: () => { filtrados = itens.filter((c) => buscaConta(busca.value, c)); limpar(area, desenhar(filtrados)); } }, 'Filtrar');
   limpar(area, desenhar(itens));
-  return [h('div', { class: 'bloco filtros' }, h('label', { class: 'campo busca' }, 'Buscar', busca), h('div', { class: 'acoes', style: { alignSelf: 'end' } }, exportar)), area];
+  return [h('div', { class: 'bloco filtros' }, h('label', { class: 'campo busca' }, 'Buscar', busca), h('div', { class: 'acoes', style: { alignSelf: 'end' } }, filtrar, exportar)), area];
 }
 
 /** Pergunta por qual conta bancária pagar as contas que ainda não têm (uma escolha por empresa). */
@@ -108,11 +124,18 @@ export async function telaAPagar({ subtitulo }) {
   const r = await api('contas.listar', { status: ['AGUARDANDO_APROVACAO', 'APROVADO'], porPagina: 200 });
   subtitulo(r.total ? 'Contas que já subiram no banco, pela data do pagamento. Confirme cada uma quando o valor sair no extrato.' : '');
   if (!r.itens.length) return h('div', { class: 'bloco vazio' }, 'Nenhuma conta no banco esperando confirmação de pagamento.');
+  const lote = (itens) => listaComLote(itens, {
+    rotuloAcao: (n) => 'Confirmar pagamento ' + (n === 1 ? 'da selecionada' : 'das ' + n),
+    corAcao: { background: 'var(--st-pago)', color: '#fff', borderColor: 'var(--st-pago)' },
+    acaoApi: 'contas.confirmarPagamentoLote',
+    antes: perguntarBaixaEmLote,
+    sucesso: (n) => n + (n === 1 ? ' pagamento confirmado.' : ' pagamentos confirmados.'),
+  });
   const secao = (titulo, dica, itens) => (itens.length ? h('section', { class: 'secao-lista' },
     h('h2', null, titulo + ' ', h('span', { class: 'secundario' }, '(' + itens.length + ' · ' + reais(somar(itens)) + ')')),
-    h('p', { class: 'secundario pequeno' }, dica), listaContas(itens, '')) : null);
+    h('p', { class: 'secundario pequeno' }, dica), lote(itens)) : null);
   return [
-    h('p', { class: 'secundario pequeno' }, 'Dica: importe o extrato em "Extratos e Soft Up" e as contas pagas recebem baixa sozinhas.'),
+    h('p', { class: 'secundario pequeno' }, 'Dica: importe o extrato em "Extratos e Soft Up" e as contas pagas recebem baixa sozinhas. Para dar baixa em várias de uma vez, marque e clique em "Confirmar pagamento".'),
     comBuscaEExportar(r.itens, 'confirmar-pagamento', (itens) => {
       const sa = secao('Aprovadas pela dona', 'Dê baixa quando cair no extrato.', itens.filter((c) => c.status === 'APROVADO'));
       const sb = secao('Aguardando a dona aprovar', 'Se ela já aprovou no banco e esqueceu no sistema, dá para dar baixa com justificativa; ela recebe um aviso.', itens.filter((c) => c.status === 'AGUARDANDO_APROVACAO'));
@@ -121,11 +144,37 @@ export async function telaAPagar({ subtitulo }) {
   ];
 }
 
+/** Antes de dar baixa em lote: data (ou o vencimento de cada uma), conferência no extrato e, se alguma ainda aguarda a dona, o motivo. */
+function perguntarBaixaEmLote(sel) {
+  const semAprovacao = sel.filter((c) => c.status === 'AGUARDANDO_APROVACAO').length;
+  return dialogo((fechar) => {
+    const usarVenc = h('input', { type: 'radio', name: 'data-lote', checked: true });
+    const usarData = h('input', { type: 'radio', name: 'data-lote' });
+    const dataEl = h('input', { type: 'date', value: hojeIso(), max: hojeIso() });
+    const conferido = h('input', { type: 'checkbox' });
+    const motivo = h('textarea', { maxlength: 500, placeholder: 'Ex.: a dona aprovou no banco e não no sistema' });
+    const erro = h('p', { class: 'mensagem erro', hidden: true });
+    return [h('h2', null, 'Confirmar ' + sel.length + (sel.length === 1 ? ' pagamento' : ' pagamentos') + ' · ' + reais(somar(sel))),
+      h('div', { class: 'campo' }, h('span', null, 'Data do pagamento'),
+        h('label', { class: 'check' }, usarVenc, 'A data de vencimento de cada conta'),
+        h('label', { class: 'check' }, usarData, 'A mesma data para todas: ', dataEl)),
+      semAprovacao ? h('label', { class: 'campo' }, semAprovacao + ' ainda aguarda(m) a dona aprovar no sistema: justificativa (ela recebe aviso)', motivo) : null,
+      h('label', { class: 'check' }, conferido, 'Conferi no extrato bancário que os valores saíram'),
+      erro,
+      h('div', { class: 'acoes fim' }, h('button', { onclick: () => fechar(null) }, 'Voltar'),
+        h('button', { class: 'primario sucesso', onclick: () => {
+          if (!conferido.checked) { erro.textContent = 'Confirme que conferiu no extrato.'; erro.hidden = false; return; }
+          if (semAprovacao && motivo.value.trim().length < 5) { erro.textContent = 'Escreva a justificativa.'; erro.hidden = false; return; }
+          fechar({ conferidoNoExtrato: true, dataPagamento: usarData.checked ? dataEl.value : undefined, motivo: motivo.value.trim() || undefined });
+        } }, 'Confirmar'))];
+  });
+}
+
 /**
  * Lista com seleção e uma ação em lote (aprovar, marcar como enviada ao banco).
  * Cada conta tem o próprio resultado: as que derem certo andam, as outras ficam.
  */
-function listaComLote(itens, { rotuloAcao, corAcao, acaoApi, sucesso }) {
+function listaComLote(itens, { rotuloAcao, corAcao, acaoApi, sucesso, antes }) {
   const marcadas = new Set();
   const total = h('span', { class: 'num' });
   const botao = h('button', { class: 'primario', style: corAcao });
@@ -145,13 +194,23 @@ function listaComLote(itens, { rotuloAcao, corAcao, acaoApi, sucesso }) {
     atualizar();
   };
   botao.onclick = () => comBotao(botao, async () => {
-    const lote = itens.filter((c) => marcadas.has(c.id)).map((c) => ({ contaId: c.id, versao: c.versao }));
+    const sel = itens.filter((c) => marcadas.has(c.id));
+    const extra = antes ? await antes(sel) : {};
+    if (!extra) return;
+    const lote = sel.map((c) => ({ contaId: c.id, versao: c.versao }));
+    // Lotes pequenos: o sistema fica livre entre um e outro para quem está lançando ao mesmo tempo.
+    const resultados = [];
     try {
-      const res = await api(acaoApi, { itens: lote });
-      const ok = res.resultados.filter((x) => x.ok).length;
-      const falhas = res.resultados.filter((x) => !x.ok);
-      toast(sucesso(ok) + (falhas.length ? ' ' + falhas.length + ' não foi(ram): ' + falhas[0].erro.mensagem : ''), { tipo: falhas.length ? 'erro' : '' });
+      for (let i = 0; i < lote.length; i += 15) {
+        if (lote.length > 15) botao.textContent = 'Processando ' + Math.min(i + 15, lote.length) + ' de ' + lote.length + '…';
+        const res = await api(acaoApi, Object.assign({}, extra, { itens: lote.slice(i, i + 15) }));
+        resultados.push(...res.resultados);
+      }
     } catch (e) { toast(e.message, { tipo: 'erro' }); }
+    const ok = resultados.filter((x) => x.ok).length;
+    const falhas = resultados.filter((x) => !x.ok);
+    if (resultados.length) toast(sucesso(ok) + (falhas.length ? ' ' + falhas.length + ' não foi(ram): ' + falhas[0].erro.mensagem : ''), { tipo: falhas.length ? 'erro' : '' });
+    marcadas.clear();
     app.recarregar();
   });
   return [
@@ -186,10 +245,13 @@ export async function telaMinhas({ subtitulo }) {
   const lista = h('div');
   let ultimas = [];
   const exportar = h('button', { onclick: () => exportarPlanilha('minhas-solicitacoes-' + hojeIso(), CABECALHO_CONTAS, ultimas.map(linhaPlanilhaConta)) }, 'Exportar para Excel');
+  const carregarSeq = {};
   const carregar = async () => {
     const texto = f.texto.value.trim();
+    const minha = (carregarSeq.n = (carregarSeq.n || 0) + 1);
     const r = await api('contas.listar', { porPagina: 200, busca: texto || undefined,
       valorCentavos: f.valor.centavos || undefined, vencimentoDe: f.de.value || undefined, vencimentoAte: f.ate.value || undefined });
+    if (minha !== carregarSeq.n) return; // chegou uma busca mais nova
     ultimas = r.itens;
     const abertas = r.itens.filter((c) => !['PAGO', 'RECUSADO', 'CANCELADO'].includes(c.status));
     subtitulo(abertas.length ? abertas.length + ' em andamento. Você recebe um aviso quando forem pagas ou recusadas.' : '');
@@ -207,7 +269,7 @@ export async function telaMinhas({ subtitulo }) {
       h('label', { class: 'campo' }, 'Valor exato (R$)', f.valor),
       h('label', { class: 'campo' }, 'Vencimento de', f.de),
       h('label', { class: 'campo' }, 'até', f.ate),
-      h('div', { class: 'acoes', style: { alignSelf: 'end' } }, exportar)),
+      h('div', { class: 'acoes', style: { alignSelf: 'end' } }, h('button', { class: 'primario', onclick: () => carregar() }, 'Filtrar'), exportar)),
     lista,
   ];
 }
@@ -220,6 +282,8 @@ export async function telaTodas({ subtitulo }) {
     fornecedor: h('input', { type: 'search', placeholder: 'Nome do fornecedor' }),
     descricao: h('input', { type: 'search', placeholder: 'Ex.: embalagem, aluguel' }),
     busca: h('input', { type: 'search', placeholder: 'Nº, documento, observação ou valor' }),
+    valorDe: campoValor({ placeholder: 'de' }), valorAte: campoValor({ placeholder: 'até' }),
+    pagDe: h('input', { type: 'date' }), pagAte: h('input', { type: 'date' }),
   };
   const resumo = h('div', { class: 'resumo' });
   const lista = h('div');
@@ -259,15 +323,20 @@ export async function telaTodas({ subtitulo }) {
   const soVencidas = h('input', { type: 'checkbox', checked: /vencidas=1/.test(location.hash) });
   const mais = h('button', { hidden: true }, 'Carregar mais');
   let pagina = 1; let itens = [];
+  let consulta = 0; // só a resposta da última busca vale (digitar rápido não duplica a lista)
   const carregar = async (novaBusca) => {
-    if (novaBusca) { pagina = 1; itens = []; marcadas.clear(); atualizarBarra(); }
+    const minha = ++consulta;
+    if (novaBusca) { pagina = 1; marcadas.clear(); atualizarBarra(); }
     const r = await api('contas.listar', {
       empresaId: f.empresa.value || undefined, status: f.status.value ? [f.status.value] : [],
       vencimentoDe: f.de.value || undefined, vencimentoAte: f.ate.value || undefined, vencidas: soVencidas.checked || undefined,
       fornecedor: f.fornecedor.value.trim() || undefined, descricao: f.descricao.value.trim() || undefined,
       busca: f.busca.value.trim() || undefined, pagina, porPagina: 50,
+      valorDe: f.valorDe.centavos || undefined, valorAte: f.valorAte.centavos || undefined,
+      pagamentoDe: f.pagDe.value || undefined, pagamentoAte: f.pagAte.value || undefined,
     });
-    itens = itens.concat(r.itens);
+    if (minha !== consulta) return; // chegou uma busca mais nova
+    itens = novaBusca ? r.itens : itens.concat(r.itens);
     limpar(resumo, Object.entries(r.resumoPorStatus).map(([st, x]) => h('span', null, statusEl(st), ' ', h('b', null, x.quantidade), ' · ', h('b', null, reais(x.valorCentavos)))));
     limpar(lista, listaContas(itens, 'Nenhuma conta com esses filtros.', fin ? selecao : null));
     if (fin) {
@@ -280,9 +349,11 @@ export async function telaTodas({ subtitulo }) {
   };
   let espera;
   Object.values(f).forEach((el) => el.addEventListener(el.type === 'search' ? 'input' : 'change', () => {
-    clearTimeout(espera); espera = setTimeout(() => carregar(true), el.type === 'search' ? 350 : 0);
+    clearTimeout(espera); espera = setTimeout(() => carregar(true), el.type === 'search' ? 500 : 0);
   }));
   soVencidas.addEventListener('change', () => carregar(true));
+  const filtrar = h('button', { class: 'primario', onclick: () => comBotao(filtrar, () => { clearTimeout(espera); return carregar(true); }) }, 'Filtrar');
+  const limparFiltros = h('button', { class: 'discreto', onclick: () => { Object.values(f).forEach((el) => { el.value = ''; }); soVencidas.checked = false; carregar(true); } }, 'Limpar');
   mais.onclick = () => comBotao(mais, () => { pagina++; return carregar(); });
   const exportar = h('button', { onclick: () => comBotao(exportar, async () => {
     try {
@@ -312,8 +383,12 @@ export async function telaTodas({ subtitulo }) {
       h('label', { class: 'campo' }, 'Status', f.status),
       h('label', { class: 'campo' }, 'Vencimento de', f.de),
       h('label', { class: 'campo' }, 'até', f.ate),
+      h('label', { class: 'campo' }, 'Valor de', f.valorDe),
+      h('label', { class: 'campo' }, 'Valor até', f.valorAte),
+      h('label', { class: 'campo' }, 'Pago de', f.pagDe),
+      h('label', { class: 'campo' }, 'Pago até', f.pagAte),
       h('label', { class: 'check' }, soVencidas, 'Só vencidas'),
-      h('div', { class: 'acoes', style: { alignSelf: 'end' } }, exportar)),
+      h('div', { class: 'acoes', style: { alignSelf: 'end' } }, filtrar, limparFiltros, exportar)),
     resumo, faltaSubir, lista, h('div', { class: 'acoes' }, mais), barra,
   ];
 }
@@ -338,8 +413,12 @@ function selectCategorias(selecionada, empresaId, natureza = 'DESPESA') {
   return h('select', null, opcoesCategorias(empresaId, selecionada, natureza));
 }
 
-function selectContasBancarias(empresaId, selecionada) {
-  return opcoes(app.cad.contasBancarias.filter((c) => c.empresaId === empresaId && c.ativo).map((c) => [c.id, c.apelido + ' · ' + c.banco + ' final ' + c.contaFinal]), selecionada, 'Escolha');
+/** Contas que podem pagar (banco, caixa, pessoa física; a aplicação não paga contas). */
+export function rotuloContaBancaria(c) {
+  return !c.tipo || c.tipo === 'BANCO' ? c.apelido + ' · ' + c.banco + ' final ' + c.contaFinal : c.apelido;
+}
+export function selectContasBancarias(empresaId, selecionada) {
+  return opcoes(app.cad.contasBancarias.filter((c) => c.empresaId === empresaId && c.ativo && c.tipo !== 'APLICACAO').map((c) => [c.id, rotuloContaBancaria(c)]), selecionada, 'Escolha');
 }
 
 async function listaFornecedores() {
@@ -348,6 +427,32 @@ async function listaFornecedores() {
 
 export const telaNovaSolicitacao = (ctx) => formularioConta('solicitar', ctx);
 export const telaLancar = (ctx) => formularioConta('lancar', ctx);
+
+/**
+ * Envia o anexo de uma conta recém-criada. Se falhar (sinal fraco, foto que o aparelho não abre...), avisa com
+ * clareza e oferece tentar de novo ou escolher outro arquivo, em vez de um aviso que some sozinho.
+ */
+async function enviarAnexoComInsistencia(conta, arquivo, tipo) {
+  let atual = arquivo;
+  for (;;) {
+    try {
+      const arq = await lerArquivo(atual);
+      await api('anexos.enviar', { contaId: conta.id, tipo, nomeArquivo: arq.nomeArquivo, mime: arq.mime, conteudoBase64: arq.conteudoBase64 });
+      return true;
+    } catch (e) {
+      const escolha = await dialogo((fechar) => {
+        const outro = h('input', { type: 'file', accept: 'application/pdf,image/*' });
+        return [h('h2', null, 'O anexo não foi enviado'),
+          h('p', null, 'A conta ' + conta.rotulo + ' foi criada, mas o arquivo não chegou: ' + e.message),
+          h('label', { class: 'campo' }, 'Escolher outro arquivo (opcional)', outro),
+          h('div', { class: 'acoes fim' }, h('button', { onclick: () => fechar(null) }, 'Anexar depois'),
+            h('button', { class: 'primario', onclick: () => fechar(outro.files[0] || atual) }, 'Tentar de novo'))];
+      });
+      if (!escolha) { toast('Lembre de anexar pelo detalhe da conta ' + conta.rotulo + '.', { tipo: 'erro', duracao: 10000 }); return false; }
+      atual = escolha;
+    }
+  }
+}
 
 async function formularioConta(modo, { subtitulo }) {
   const lancar = modo === 'lancar';
@@ -370,9 +475,12 @@ async function formularioConta(modo, { subtitulo }) {
     centroCusto: h('input', { maxlength: 60 }),
     urgente: h('input', { type: 'checkbox' }),
     observacoes: h('textarea', { maxlength: 500 }),
-    arquivo: h('input', { type: 'file', accept: 'application/pdf,image/jpeg,image/png' }),
-    tipoArquivo: h('select', null, opcoes([['BOLETO', 'Boleto'], ['NOTA_FISCAL', 'Nota fiscal'], ['OUTRO', 'Outro documento']], 'BOLETO')),
+    arquivo: h('input', { type: 'file', accept: 'application/pdf,image/*' }),
+    tipoArquivo: h('select', null, opcoes([['BOLETO', 'Boleto'], ['NOTA_FISCAL', 'Nota fiscal'], ['COMPROVANTE', 'Comprovante de pagamento'], ['OUTRO', 'Outro documento']], 'BOLETO')),
+    dinheiro: h('input', { type: 'checkbox' }),
   };
+  const rotuloVenc = h('span', null, 'Vencimento');
+  const dicaVenc = h('span', { class: 'dica' }, 'O primeiro, se for parcelado ou recorrente.');
   // Fornecedor cadastrado com categoria de costume: já sugere a categoria (se a empresa usa).
   f.fornecedor.addEventListener('change', () => {
     if (!lancar || f.categoria.value) return;
@@ -436,6 +544,19 @@ async function formularioConta(modo, { subtitulo }) {
     h('p', { class: 'largo secundario pequeno' }, 'O vencimento informado acima é o primeiro. Cada conta é criada 10 dias antes como "Prevista"; você confere o valor e lança.'));
 
   const mostrarTipo = () => { blocoParcelas.hidden = tipo !== 'parcelado'; blocoRecorrente.hidden = tipo !== 'recorrente'; };
+  // Gerente: "já paguei em dinheiro" (do caixa da loja). A data é a do pagamento e o comprovante é obrigatório.
+  const blocoUrgente = h('label', { class: 'check largo' });
+  const avisoDinheiro = h('p', { class: 'largo mensagem aviso', hidden: true }, 'Anexe a foto do comprovante. O financeiro confere e dá baixa no caixa da loja.');
+  f.dinheiro.addEventListener('change', () => {
+    const d = f.dinheiro.checked;
+    rotuloVenc.textContent = d ? 'Data em que pagou' : 'Vencimento';
+    if (d) { f.vencimento.max = hojeIso(); if (!f.vencimento.value || f.vencimento.value > hojeIso()) f.vencimento.value = hojeIso(); } else f.vencimento.removeAttribute('max');
+    dicaVenc.textContent = d ? 'Hoje ou antes.' : 'O primeiro, se for parcelado ou recorrente.';
+    radios.hidden = d; if (d) { tipo = 'unico'; radios.querySelector('input[value=unico]').checked = true; mostrarTipo(); }
+    blocoUrgente.hidden = d; avisoDinheiro.hidden = !d;
+    f.tipoArquivo.value = d ? 'COMPROVANTE' : 'BOLETO';
+    enviar.textContent = d ? 'Enviar pagamento em dinheiro' : 'Enviar solicitação';
+  });
 
   const erro = h('p', { class: 'mensagem erro', hidden: true });
   const enviar = h('button', { class: 'primario', type: 'submit' }, lancar ? 'Lançar conta' : 'Enviar solicitação');
@@ -452,6 +573,11 @@ async function formularioConta(modo, { subtitulo }) {
     if (lancar) Object.assign(d, { categoriaId: f.categoria.value || undefined, contaBancariaId: f.contaBancaria.value || undefined,
       dataEmissao: f.emissao.value || undefined, centroCusto: f.centroCusto.value.trim() || undefined });
     d.urgente = f.urgente.checked;
+    if (!lancar && f.dinheiro.checked) {
+      if (!f.arquivo.files[0]) throw new Error('Anexe o comprovante do pagamento em dinheiro.');
+      if (f.vencimento.value > hojeIso()) throw new Error('A data do pagamento não pode ser no futuro.');
+      d.pagoEmDinheiro = true; d.urgente = false; d.formaPagamento = 'DINHEIRO';
+    }
     if (tipo === 'parcelado') {
       if (!parcelas.length) throw new Error('Clique em "Calcular parcelas" e confira as datas e valores.');
       d.parcelas = parcelas.map((p) => ({ dataVencimento: p.data.value, valorCentavos: p.valor.centavos }));
@@ -490,12 +616,7 @@ async function formularioConta(modo, { subtitulo }) {
         toast('Conta recorrente criada.' + (r.recorrente.contasGeradas ? ' A primeira já está em "Para fazer".' : ' A primeira aparece 10 dias antes do vencimento.'));
       } else {
         const primeira = r.contas[0];
-        if (f.arquivo.files[0]) {
-          try {
-            const arq = await lerArquivo(f.arquivo.files[0]);
-            await api('anexos.enviar', { contaId: primeira.id, tipo: f.tipoArquivo.value, nomeArquivo: arq.nomeArquivo, mime: arq.mime, conteudoBase64: arq.conteudoBase64 });
-          } catch (e2) { toast('A conta foi criada, mas o anexo não foi enviado: ' + e2.message + ' Anexe pelo detalhe da conta.', { tipo: 'erro', duracao: 12000 }); }
-        }
+        if (f.arquivo.files[0]) await enviarAnexoComInsistencia(primeira, f.arquivo.files[0], f.tipoArquivo.value);
         toast((lancar ? 'Conta ' : 'Solicitação ') + primeira.rotulo.replace(/-1\/\d+$/, '') + (r.contas.length > 1 ? ' (' + r.contas.length + ' parcelas)' : '') + (lancar ? ' lançada.' : ' enviada.'),
           { acao: { rotulo: 'Ver', fn: () => abrirDetalhe(primeira.id) } });
       }
@@ -504,25 +625,27 @@ async function formularioConta(modo, { subtitulo }) {
   } },
   h('div', { class: 'grade-campos' },
     empresas.length > 1 ? h('label', { class: 'campo' }, 'Empresa', f.empresa) : h('div', { class: 'campo' }, h('span', null, 'Empresa'), h('b', null, empresas[0] ? empresas[0].nome : '')),
-    h('label', { class: 'campo' }, 'Fornecedor', f.fornecedor, h('datalist', { id: idLista }, fornecedores.map((x) => h('option', { value: x.nome })))),
+    h('label', { class: 'campo' }, 'Fornecedor', f.fornecedor, h('datalist', { id: idLista }, [...new Set(fornecedores.map((x) => x.nome))].map((nome) => h('option', { value: nome })))),
     h('label', { class: 'campo largo' }, 'Descrição', h('span', { class: 'dica' }, 'Ex.: compra de embalagens, conserto da câmara fria.'), f.descricao),
     h('label', { class: 'campo' }, 'Valor total (R$)', f.valor),
-    h('label', { class: 'campo' }, 'Vencimento', h('span', { class: 'dica' }, 'O primeiro, se for parcelado ou recorrente.'), f.vencimento),
+    h('label', { class: 'campo' }, rotuloVenc, dicaVenc, f.vencimento),
     h('label', { class: 'campo' }, 'Nº da nota ou do boleto', h('span', { class: 'dica' }, 'Opcional'), f.documento),
     lancar ? h('label', { class: 'campo' }, 'Emissão', h('span', { class: 'dica' }, 'Opcional'), f.emissao) : null,
     lancar ? h('label', { class: 'campo' }, 'Categoria', f.categoria) : null,
     h('label', { class: 'campo' }, 'Forma de pagamento', f.forma),
     lancar ? h('label', { class: 'campo' }, 'Pagar pela conta', h('span', { class: 'dica' }, 'Pode escolher depois, ao subir para aprovação.'), f.contaBancaria) : null,
     lancar ? h('label', { class: 'campo' }, 'Centro de custo', h('span', { class: 'dica' }, 'Opcional'), f.centroCusto) : null,
+    !lancar ? h('label', { class: 'check largo destaque-dinheiro' }, f.dinheiro, h('span', null, h('b', null, 'Já paguei em dinheiro'), ' (do caixa da loja)')) : null,
+    avisoDinheiro,
     h('div', { class: 'campo largo' }, h('span', null, 'Tipo'), radios),
     blocoParcelas, blocoRecorrente,
     h('label', { class: 'campo largo' }, 'Observações', h('span', { class: 'dica' }, 'Opcional. Ex.: fornecedor pediu pagamento até 15h.'), f.observacoes),
     h('div', { class: 'largo grade-campos' },
       h('label', { class: 'campo' }, 'Anexar boleto ou nota', h('span', { class: 'dica' }, 'PDF ou foto, até 5 MB.'), f.arquivo),
       h('label', { class: 'campo' }, 'Tipo do anexo', f.tipoArquivo)),
-    h('label', { class: 'check largo' }, f.urgente, h('span', null, h('b', null, 'Urgente'), lancar
+    (limpar(blocoUrgente, f.urgente, h('span', null, h('b', null, 'Urgente'), lancar
       ? ' — a dona recebe aviso destacado quando subir para aprovação, e de novo a cada hora (até 19h) enquanto não aprovar.'
-      : ' — precisa ser pago hoje. O financeiro recebe um alerta destacado.'))),
+      : ' — precisa ser pago hoje. O financeiro recebe um alerta destacado.')), blocoUrgente)),
   erro,
   h('div', { class: 'acoes fim', style: { marginTop: '16px' } }, enviar));
   return voltar ? [voltar, form] : form;
@@ -533,9 +656,11 @@ async function formularioConta(modo, { subtitulo }) {
 // ---------------------------------------------------------------------------
 
 const NOME_ACAO = {
-  lancar: 'Lançar conta', recusar: 'Recusar', cancelar: 'Cancelar conta', reenviar: 'Corrigir (volta para "Subir no banco")',
+  lancar: 'Lançar conta', recusar: 'Recusar', cancelar: 'Excluir (lançamento errado ou duplicado)', reenviar: 'Corrigir (volta para "Subir no banco")',
   enviarBanco: 'Subir para aprovação', tirarDoBanco: 'Tirar da aprovação',
   aprovar: 'Aprovar', devolver: 'Devolver ao financeiro', confirmarPagamento: 'Confirmar pagamento',
+  desfazerAprovacao: 'Desfazer aprovação', excluir: 'Excluir pagamento (errado ou duplicado)',
+  confirmarDinheiro: 'Conferido: dar baixa no Caixa', descontoFolha: 'Baixa: descontado em folha',
 };
 const NOME_EVENTO = {
   CONTA_CRIADA: 'Conta criada', CONTA_LANCAR: 'Lançada', CONTA_ENVIAR_BANCO: 'Subiu para aprovação (agendada no banco)',
@@ -684,7 +809,7 @@ function blocoParcelas(d, c, recarregar) {
 }
 
 function blocoAnexos(d, c, final, recarregar) {
-  const podeAnexar = !['CANCELADO', 'RECUSADO'].includes(c.status) && (app.tem('FINANCEIRO') || (c.status === 'SOLICITADO' && app.tem('GERENTE')));
+  const podeAnexar = d.podeAnexar !== undefined ? d.podeAnexar : !['CANCELADO', 'RECUSADO'].includes(c.status) && app.tem('FINANCEIRO');
   const enviarArquivo = async (arquivoEl, tipo, botao, sucesso) => comBotao(botao, async () => {
     if (!arquivoEl.files[0]) { toast('Escolha um arquivo.', { tipo: 'erro' }); return; }
     try {
@@ -698,14 +823,14 @@ function blocoAnexos(d, c, final, recarregar) {
   const temComprovante = d.anexos.some((a) => a.tipo === 'COMPROVANTE');
   let comprovanteDepois = null;
   if (c.status === 'PAGO' && !temComprovante && app.tem('FINANCEIRO')) {
-    const arq = h('input', { type: 'file', accept: 'application/pdf,image/jpeg,image/png' });
+    const arq = h('input', { type: 'file', accept: 'application/pdf,image/*' });
     const b = h('button', { class: 'primario sucesso' }, 'Anexar comprovante');
     b.onclick = () => enviarArquivo(arq, 'COMPROVANTE', b, 'Comprovante anexado.' + (c.solicitadoPor ? ' ' + c.solicitadoPor + ' foi avisado(a).' : ''));
     comprovanteDepois = h('div', { class: 'comprovante-destaque' }, h('div', null, h('b', null, 'Pago sem comprovante'),
       h('div', { class: 'secundario pequeno' }, 'Anexe aqui; quem pediu o pagamento recebe um aviso.')), h('div', { class: 'envio-anexo' }, arq, b));
   }
-  const arquivo = h('input', { type: 'file', accept: 'application/pdf,image/jpeg,image/png' });
-  const tipo = h('select', null, opcoes([['BOLETO', 'Boleto'], ['NOTA_FISCAL', 'Nota fiscal'], ['OUTRO', 'Outro']], 'BOLETO'));
+  const arquivo = h('input', { type: 'file', accept: 'application/pdf,image/*' });
+  const tipo = h('select', null, opcoes([['BOLETO', 'Boleto'], ['NOTA_FISCAL', 'Nota fiscal'], ['COMPROVANTE', 'Comprovante de pagamento'], ['OUTRO', 'Outro']], c.status === 'PAGO' ? 'COMPROVANTE' : 'BOLETO'));
   const enviar = h('button', null, 'Enviar anexo');
   enviar.onclick = () => enviarArquivo(arquivo, tipo.value, enviar, 'Anexo enviado.');
   const TIPO = { BOLETO: 'Boleto', NOTA_FISCAL: 'Nota fiscal', COMPROVANTE: 'Comprovante de pagamento', OUTRO: 'Outro' };
@@ -714,7 +839,7 @@ function blocoAnexos(d, c, final, recarregar) {
     d.anexos.length ? h('div', null, d.anexos.map((a) => h('div', { class: 'anexo' },
       h('div', null, h('div', null, TIPO[a.tipo] + ' · ' + a.nomeArquivo), h('div', { class: 'secundario pequeno' }, a.enviadoPor + ', ' + dataHora(a.enviadoEm))),
       h('button', { class: 'discreto', onclick: (e) => abrirAnexo(a.id, e.currentTarget) }, 'Abrir')))) : h('p', { class: 'secundario pequeno' }, 'Nenhum anexo.'),
-    podeAnexar && c.status !== 'PAGO' ? h('div', null, h('p', { class: 'secundario pequeno', style: { margin: '10px 0 6px' } }, 'Boleto, nota ou outro documento. O comprovante de pagamento vai na hora de confirmar o pagamento.'),
+    podeAnexar && !(c.status === 'PAGO' && comprovanteDepois) ? h('div', null, h('p', { class: 'secundario pequeno', style: { margin: '10px 0 6px' } }, app.tem('FINANCEIRO') ? 'Boleto, nota ou outro documento. O comprovante de pagamento vai na hora de confirmar o pagamento.' : 'Boleto, nota, comprovante ou outro documento. O financeiro vê na hora.'),
       h('div', { class: 'envio-anexo' }, arquivo, tipo, enviar)) : null);
 }
 
@@ -752,6 +877,30 @@ async function transicionar(c, acao, extra) {
   return await api('contas.transicionar', Object.assign({ contaId: c.id, versao: c.versao, acao }, extra || {}));
 }
 
+/** Baixa sem passar pelo banco: dinheiro do caixa (pago pelo gerente) ou desconto em folha. */
+function formBaixaSemBanco(c, acao, area, tratar) {
+  const dinheiro = acao === 'confirmarDinheiro';
+  const categoria = h('select', null, opcoesCategorias(c.empresaId, c.categoriaId));
+  const dataEl = h('input', { type: 'date', value: dinheiro ? c.dataVencimento : hojeIso(), max: hojeIso() });
+  const caixas = app.cad.contasBancarias.filter((x) => x.empresaId === c.empresaId && x.ativo && x.tipo !== 'APLICACAO');
+  const caixa = caixas.find((x) => x.tipo === 'CAIXA');
+  const conta = h('select', null, opcoes(caixas.map((x) => [x.id, rotuloContaBancaria(x)]), caixa ? caixa.id : '', 'Escolha'));
+  const obs = h('input', { maxlength: 300, placeholder: dinheiro ? 'Opcional' : 'Ex.: funcionária Maria, folha de novembro' });
+  const erro = h('p', { class: 'mensagem erro', hidden: true });
+  const botao = h('button', { class: 'primario sucesso' }, dinheiro ? 'Dar baixa no caixa' : 'Dar baixa (desconto em folha)');
+  botao.onclick = () => comBotao(botao, async () => {
+    if (!categoria.value) { erro.textContent = 'Escolha a categoria.'; erro.hidden = false; return; }
+    await tratar(() => transicionar(c, acao, { categoriaId: categoria.value, dataPagamento: dataEl.value, observacao: obs.value.trim() || undefined,
+      contaBancariaId: dinheiro ? conta.value || undefined : undefined }), dinheiro ? 'Baixa dada no caixa. O gerente foi avisado.' : 'Baixa dada: descontado em folha (não sai de nenhuma conta).');
+  });
+  limpar(area, h('div', { class: 'acao-aberta' },
+    h('p', { class: 'secundario pequeno' }, dinheiro ? 'O gerente pagou em dinheiro. Confira o comprovante anexado: a saída é registrada na conta Caixa da loja.'
+      : 'O funcionário vai pagar pelo desconto no salário: a conta fica paga sem sair dinheiro de nenhuma conta (não entra no saldo nem no fluxo de caixa).'),
+    h('div', { class: 'grade-campos' }, h('label', { class: 'campo' }, 'Categoria', categoria), h('label', { class: 'campo' }, dinheiro ? 'Data do pagamento' : 'Data da baixa', dataEl),
+      dinheiro ? h('label', { class: 'campo' }, 'Saiu da conta', conta) : null, h('label', { class: 'campo' }, 'Observação', obs)),
+    erro, h('div', { class: 'acoes' }, botao)));
+}
+
 async function executarAcao(a, c, botao, area, recarregar) {
   const tratar = async (fn, sucesso) => {
     try { await fn(); toast(sucesso); await recarregar(); } catch (e) {
@@ -760,11 +909,15 @@ async function executarAcao(a, c, botao, area, recarregar) {
     }
   };
   if (a.acao === 'confirmarPagamento') return formPagamento(c, area, tratar, a.motivoObrigatorio);
+  if (a.acao === 'confirmarDinheiro' || a.acao === 'descontoFolha') return formBaixaSemBanco(c, a.acao, area, tratar);
   if (a.motivoObrigatorio) {
-    const titulos = { recusar: 'Recusar a solicitação', cancelar: 'Cancelar a conta', devolver: 'Devolver ao financeiro (não aprovada no banco)', tirarDoBanco: 'Tirar da aprovação (volta para "Lançada")' };
+    const titulos = { recusar: 'Recusar a solicitação', cancelar: 'Excluir a conta (fica no histórico)', devolver: 'Devolver ao financeiro (não aprovada no banco)',
+      tirarDoBanco: 'Tirar da aprovação (volta para "Lançada")', desfazerAprovacao: 'Desfazer a aprovação (deu erro no banco?) — a conta volta para aprovar',
+      excluir: 'Excluir este pagamento (errado ou duplicado). Ele sai dos relatórios e do saldo, mas fica no histórico.' };
     const motivo = await pedirMotivo(titulos[a.acao] || NOME_ACAO[a.acao], NOME_ACAO[a.acao], true);
     if (!motivo) return;
-    return comBotao(botao, () => tratar(() => transicionar(c, a.acao, { motivo }), { recusar: 'Solicitação recusada.', cancelar: 'Conta cancelada.', devolver: 'Conta devolvida. O financeiro foi avisado.', tirarDoBanco: 'Conta voltou para "Lançada".' }[a.acao]));
+    return comBotao(botao, () => tratar(() => transicionar(c, a.acao, { motivo }), { recusar: 'Solicitação recusada.', cancelar: 'Conta excluída.', devolver: 'Conta devolvida. O financeiro foi avisado.',
+      tirarDoBanco: 'Conta voltou para "Lançada".', desfazerAprovacao: 'Aprovação desfeita. O financeiro foi avisado.', excluir: 'Pagamento excluído.' }[a.acao]));
   }
   if (a.acao === 'aprovar') return comBotao(botao, () => tratar(() => transicionar(c, 'aprovar'), 'Conta aprovada. O financeiro foi avisado.'));
   if (a.acao === 'enviarBanco') {
@@ -807,7 +960,7 @@ function formPagamento(c, area, tratar, semAprovacao) {
   const ref = h('input', { maxlength: 80, placeholder: 'Ex.: autenticação ou ID da transação' });
   const conferido = h('input', { type: 'checkbox' });
   const justificativa = h('textarea', { maxlength: 500, placeholder: 'Ex.: a dona aprovou no banco dia 18 e esqueceu de aprovar no sistema' });
-  const arquivo = h('input', { type: 'file', accept: 'application/pdf,image/jpeg,image/png' });
+  const arquivo = h('input', { type: 'file', accept: 'application/pdf,image/*' });
   const botao = h('button', { class: 'primario sucesso' }, 'Confirmar pagamento');
   botao.onclick = () => comBotao(botao, async () => {
     if (!conferido.checked) { toast('Marque que conferiu a compensação no extrato bancário.', { tipo: 'erro' }); return; }
